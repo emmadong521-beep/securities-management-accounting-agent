@@ -72,7 +72,7 @@ TABLE_COLUMNS = {
     "branch_expense": ["period", "branch_id", "salary_expense", "rent_expense", "marketing_expense", "it_allocated_expense", "market_data_allocated_expense", "hq_allocated_expense", "total_expense"],
     "branch_profitability": ["period", "branch_id", "revenue", "direct_cost", "allocated_expense", "operating_profit", "operating_margin", "profit_rank"],
     "bizline_profitability": ["period", "biz_line_id", "revenue", "direct_cost", "allocated_expense", "operating_profit", "operating_margin", "profit_contribution_rate"],
-    "pvm_analysis_result": ["period", "analysis_scope", "scope_id", "budget_revenue", "actual_revenue", "total_variance", "volume_effect", "rate_effect", "mix_effect", "explanation"],
+    "pvm_analysis_result": ["period", "branch_id", "branch_name", "customer_segment", "product_type", "budget_revenue", "actual_revenue", "budget_trade_volume", "actual_trade_volume", "budget_commission_rate", "actual_commission_rate", "total_variance", "volume_effect", "rate_effect", "mix_effect", "explanation"],
     "management_insight": ["insight_id", "period", "insight_type", "severity", "title", "finding", "financial_impact", "recommendation", "owner_department", "follow_up_metric"],
     "market_benchmark": ["period", "market_trade_volume_index", "industry_avg_commission_rate", "industry_avg_branch_margin", "market_comment"],
 }

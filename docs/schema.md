@@ -11,6 +11,10 @@
 - branch_expense：营业部薪酬、租金、营销、IT、行情和总部分摊费用。
 - branch_profitability：营业部分摊后盈利能力。
 - bizline_profitability：业务线利润贡献。
-- pvm_analysis_result：经纪业务价量结构拆解结果。
+- pvm_analysis_result：经纪业务价量结构拆解结果，维度为期间、营业部、客户分层和产品类型。
 - management_insight：管理洞察和建议。
 - market_benchmark：市场交易量和佣金率基准。
+
+## 输出报告
+
+- data_quality_report：由 `python -m src.data_quality` 生成，包含行数、主键、外键、金额空值、利润勾稽、PVM 恒等关系、经营故事检测、公开指标校准和检查结论。

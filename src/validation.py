@@ -75,37 +75,72 @@ def run_brokerage_budget_variance(period: str) -> pd.DataFrame:
     return df
 
 
-def run_pvm_analysis(period: str, scope: str = "BROKERAGE") -> pd.DataFrame:
-    budget = _table("monthly_budget")
-    actual = _table("monthly_actual")
-    if scope != "BROKERAGE":
-        raise ValueError("第一版 PVM 仅实现 BROKERAGE")
-    b = budget[(budget["period"] == period) & (budget["biz_line_id"] == "BROKERAGE")]
-    a = actual[(actual["period"] == period) & (actual["biz_line_id"] == "BROKERAGE")]
-    budget_volume = b["budget_trade_volume"].sum()
-    actual_volume = a["actual_trade_volume"].sum()
-    budget_rate = b["budget_revenue"].sum() / max(budget_volume, 1.0)
-    actual_rate = a["actual_revenue"].sum() / max(actual_volume, 1.0)
-    budget_revenue = budget_volume * budget_rate
-    actual_revenue = actual_volume * actual_rate
+def get_pvm_detail(
+    period: str,
+    branch_id: str | None = None,
+    customer_segment: str | None = None,
+    product_type: str | None = None,
+) -> pd.DataFrame:
+    detail = _table("pvm_analysis_result")
+    df = detail[detail["period"] == period].copy()
+    if branch_id and branch_id != "ALL":
+        df = df[df["branch_id"] == branch_id]
+    if customer_segment and customer_segment != "ALL":
+        df = df[df["customer_segment"] == customer_segment]
+    if product_type and product_type != "ALL":
+        df = df[df["product_type"] == product_type]
+    return df.reset_index(drop=True)
+
+
+def _aggregate_pvm(df: pd.DataFrame, period: str) -> pd.DataFrame:
+    budget_volume = df["budget_trade_volume"].sum()
+    actual_volume = df["actual_trade_volume"].sum()
+    budget_revenue = df["budget_revenue"].sum()
+    actual_revenue = df["actual_revenue"].sum()
+    budget_rate = budget_revenue / max(budget_volume, 1.0)
+    actual_rate = actual_revenue / max(actual_volume, 1.0)
     total_variance = actual_revenue - budget_revenue
     volume_effect = (actual_volume - budget_volume) * budget_rate
     rate_effect = actual_volume * (actual_rate - budget_rate)
     mix_effect = total_variance - volume_effect - rate_effect
-    df = pd.DataFrame([{
+    return pd.DataFrame([{
         "period": period,
-        "analysis_scope": scope,
-        "scope_id": "ALL",
+        "branch_id": "ALL",
+        "branch_name": "全公司",
+        "customer_segment": "ALL",
+        "product_type": "ALL",
         "budget_revenue": round(budget_revenue, 2),
         "actual_revenue": round(actual_revenue, 2),
+        "budget_trade_volume": round(budget_volume, 2),
+        "actual_trade_volume": round(actual_volume, 2),
+        "budget_commission_rate": round(budget_rate, 8),
+        "actual_commission_rate": round(actual_rate, 8),
         "total_variance": round(total_variance, 2),
         "volume_effect": round(volume_effect, 2),
         "rate_effect": round(rate_effect, 2),
         "mix_effect": round(mix_effect, 2),
         "explanation": "经纪佣金收入低于预算，主要由市场交易量下降和平均佣金率下行驱动。",
     }])
-    _replace_table("pvm_analysis_result", df)
-    return df
+
+
+def run_pvm_analysis(
+    period: str,
+    scope: str = "BROKERAGE",
+    branch_id: str | None = None,
+    customer_segment: str | None = None,
+    product_type: str | None = None,
+) -> pd.DataFrame:
+    if scope != "BROKERAGE":
+        raise ValueError("第一版 PVM 仅实现 BROKERAGE")
+    detail = get_pvm_detail(period, branch_id, customer_segment, product_type)
+    if detail.empty:
+        return pd.DataFrame(columns=[
+            "period", "branch_id", "branch_name", "customer_segment", "product_type",
+            "budget_revenue", "actual_revenue", "budget_trade_volume", "actual_trade_volume",
+            "budget_commission_rate", "actual_commission_rate", "total_variance",
+            "volume_effect", "rate_effect", "mix_effect", "explanation",
+        ])
+    return _aggregate_pvm(detail, period)
 
 
 def detect_management_insights(period: str) -> pd.DataFrame:
@@ -226,5 +261,6 @@ def generate_chart_data(period: str) -> dict[str, pd.DataFrame]:
         "branch_profitability": calculate_branch_profitability(period),
         "brokerage_variance": run_brokerage_budget_variance(period),
         "pvm": run_pvm_analysis(period, "BROKERAGE"),
+        "pvm_detail": get_pvm_detail(period),
         "insights": detect_management_insights(period),
     }

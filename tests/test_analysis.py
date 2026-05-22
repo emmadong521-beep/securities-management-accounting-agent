@@ -5,6 +5,7 @@ from src.validation import (
     calculate_branch_profitability,
     detect_management_insights,
     generate_cfo_report_mock,
+    get_pvm_detail,
     run_pvm_analysis,
 )
 
@@ -28,6 +29,14 @@ def test_branch_profitability_has_no_nulls():
 def test_pvm_identity_holds():
     pvm = run_pvm_analysis("2025-09", "BROKERAGE").iloc[0]
     assert abs(pvm["total_variance"] - (pvm["volume_effect"] + pvm["rate_effect"] + pvm["mix_effect"])) < 1.0
+
+
+def test_pvm_detail_dimension_expanded():
+    detail = get_pvm_detail("2025-09")
+    assert len(detail) >= 100
+    assert {"branch_id", "branch_name", "customer_segment", "product_type"}.issubset(detail.columns)
+    identity_diff = (detail["total_variance"] - (detail["volume_effect"] + detail["rate_effect"] + detail["mix_effect"])).abs().max()
+    assert identity_diff < 2.0
 
 
 def test_seeded_management_stories_detected():

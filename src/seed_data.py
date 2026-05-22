@@ -84,30 +84,39 @@ def _profitability(monthly_actual: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataF
 
 def _pvm_rows(budget: pd.DataFrame, actual: pd.DataFrame) -> list[dict]:
     rows = []
-    for period in PERIODS:
-        b = budget[(budget["period"] == period) & (budget["biz_line_id"] == "BROKERAGE")]
-        a = actual[(actual["period"] == period) & (actual["biz_line_id"] == "BROKERAGE")]
-        bv = b["budget_trade_volume"].sum()
-        av = a["actual_trade_volume"].sum()
-        br = b["budget_revenue"].sum() / max(bv, 1.0)
-        ar = a["actual_revenue"].sum() / max(av, 1.0)
-        budget_revenue = bv * br
-        actual_revenue = av * ar
-        volume_effect = (av - bv) * br
-        rate_effect = av * (ar - br)
+    branch_name = {branch_id: name for branch_id, name, *_ in BRANCHES}
+    keys = ["period", "branch_id", "customer_segment", "product_type"]
+    b = budget[budget["biz_line_id"] == "BROKERAGE"]
+    a = actual[actual["biz_line_id"] == "BROKERAGE"]
+    merged = b.merge(a, on=keys + ["biz_line_id"], how="inner")
+    for r in merged.itertuples():
+        budget_revenue = float(r.budget_revenue)
+        actual_revenue = float(r.actual_revenue)
+        budget_volume = float(r.budget_trade_volume)
+        actual_volume = float(r.actual_trade_volume)
+        budget_rate = float(r.budget_commission_rate)
+        actual_rate = float(r.actual_commission_rate)
+        volume_effect = (actual_volume - budget_volume) * budget_rate
+        rate_effect = actual_volume * (actual_rate - budget_rate)
         total_variance = actual_revenue - budget_revenue
         mix_effect = total_variance - volume_effect - rate_effect
         rows.append({
-            "period": period,
-            "analysis_scope": "BROKERAGE",
-            "scope_id": "ALL",
+            "period": r.period,
+            "branch_id": r.branch_id,
+            "branch_name": branch_name.get(r.branch_id, r.branch_id),
+            "customer_segment": r.customer_segment,
+            "product_type": r.product_type,
             "budget_revenue": _money(budget_revenue),
             "actual_revenue": _money(actual_revenue),
+            "budget_trade_volume": _money(budget_volume),
+            "actual_trade_volume": _money(actual_volume),
+            "budget_commission_rate": round(budget_rate, 8),
+            "actual_commission_rate": round(actual_rate, 8),
             "total_variance": _money(total_variance),
             "volume_effect": _money(volume_effect),
             "rate_effect": _money(rate_effect),
             "mix_effect": _money(mix_effect),
-            "explanation": "经纪佣金收入 = 交易量 × 平均佣金率；差异拆为交易量、佣金率和混合影响。",
+            "explanation": "经纪佣金收入 = 交易量 × 平均佣金率；差异按营业部、客户分层和产品类型拆解。",
         })
     return rows
 
@@ -173,13 +182,53 @@ def generate_synthetic_data(output_dir: str | Path = SYNTHETIC_DIR) -> dict[str,
                 b_revenue = budget_annual * season[month_idx] * bw * branch_multiplier
                 a_revenue = actual_annual * season[month_idx] * bw * branch_multiplier
                 if biz_id == "BROKERAGE":
-                    budget_rate = 0.00036 if branch_id != "B002" else 0.00030
-                    if branch_id == "B003":
-                        budget_rate *= 0.95
-                    budget_volume = b_revenue / budget_rate
-                    actual_volume = budget_volume * market_factor * (0.94 if branch_id == "B002" else 0.98)
-                    actual_rate = budget_rate * (0.91 if branch_id == "B002" else 0.96)
-                    a_revenue = actual_volume * actual_rate
+                    segment_weights = {"RETAIL": 0.56, "HNW": 0.25, "INSTITUTION": 0.19}
+                    product_weights = {"STOCK": 0.58, "FUND": 0.17, "BOND": 0.08, "ETF": 0.17}
+                    segment_rate_adj = {"RETAIL": 1.08, "HNW": 0.94, "INSTITUTION": 0.76}
+                    product_rate_adj = {"STOCK": 1.00, "FUND": 0.90, "BOND": 0.72, "ETF": 0.82}
+                    for segment, segment_weight in segment_weights.items():
+                        for product_type, product_weight in product_weights.items():
+                            combo_revenue = b_revenue * segment_weight * product_weight
+                            budget_rate = (0.00036 if branch_id != "B002" else 0.00030) * segment_rate_adj[segment] * product_rate_adj[product_type]
+                            if branch_id == "B003":
+                                budget_rate *= 0.95
+                            budget_volume = combo_revenue / budget_rate
+                            actual_volume = budget_volume * market_factor * (0.94 if branch_id == "B002" else 0.98) * (0.96 if segment == "INSTITUTION" else 1.0)
+                            actual_rate = budget_rate * (0.88 if segment == "INSTITUTION" else 0.91 if branch_id == "B002" else 0.96)
+                            actual_revenue = actual_volume * actual_rate
+                            direct_ratio = 0.23
+                            alloc_ratio = 0.24 + (0.16 if branch_id == "B002" else 0.0) + (0.06 if branch_id in {"B006", "B009"} else 0.0)
+                            b_direct = combo_revenue * direct_ratio
+                            b_alloc = combo_revenue * 0.24
+                            a_direct = actual_revenue * direct_ratio
+                            a_alloc = actual_revenue * alloc_ratio
+                            budget_rows.append({
+                                "period": period,
+                                "biz_line_id": biz_id,
+                                "branch_id": branch_id,
+                                "product_type": product_type,
+                                "customer_segment": segment,
+                                "budget_revenue": _money(combo_revenue),
+                                "budget_direct_cost": _money(b_direct),
+                                "budget_allocated_expense": _money(b_alloc),
+                                "budget_profit": _money(combo_revenue - b_direct - b_alloc),
+                                "budget_trade_volume": _money(budget_volume),
+                                "budget_commission_rate": round(budget_rate, 8),
+                            })
+                            actual_rows.append({
+                                "period": period,
+                                "biz_line_id": biz_id,
+                                "branch_id": branch_id,
+                                "product_type": product_type,
+                                "customer_segment": segment,
+                                "actual_revenue": _money(actual_revenue),
+                                "actual_direct_cost": _money(a_direct),
+                                "actual_allocated_expense": _money(a_alloc),
+                                "actual_profit": _money(actual_revenue - a_direct - a_alloc),
+                                "actual_trade_volume": _money(actual_volume),
+                                "actual_commission_rate": round(actual_rate, 8),
+                            })
+                    continue
                 elif biz_id == "MARGIN":
                     budget_volume = b_revenue / 0.00008
                     actual_volume = budget_volume * 0.88
