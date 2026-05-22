@@ -1,0 +1,4 @@
+segment_id,segment_name,description
+RETAIL,普通零售,大众零售客户
+HNW,高净值,高净值及财富客户
+INSTITUTION,机构客户,机构客户

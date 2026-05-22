@@ -1,0 +1,8 @@
+biz_line_id,biz_line_name,description
+BROKERAGE,经纪业务,手续费佣金、交易量和佣金率
+IB,投行业务,承销保荐、财务顾问项目
+ASSET_MGMT,资产管理,管理费和资管规模
+PROPRIETARY,自营投资,投资收益和公允价值变动
+MARGIN,信用业务,融资融券利息收入
+WEALTH,财富管理,代销金融产品和投顾
+HQ,总部管理,总部共享与其他收入费用
