@@ -38,6 +38,21 @@ python3.11 -m venv .venv
 .venv/bin/streamlit run src/app.py
 ```
 
+一键启动本地 Demo：
+
+```bash
+./scripts/run_demo.sh
+```
+
+## Quick Demo Path
+
+1. 打开“CFO 首页看板”，查看营业收入、经营利润、经纪收入差异和管理洞察数量。
+2. 进入“业务线利润贡献分析”，对比业务线收入与分摊后经营利润（万元）。
+3. 打开“经纪业务预实差异归因”，使用期间、营业部、客户分层和产品类型筛选 PVM 明细。
+4. 查看 PVM 瀑布图和 Top negative variance 明细，定位交易量、佣金率和混合影响。
+5. 进入“营业部盈利能力排名”，识别收入高但经营利润率偏低的营业部。
+6. 在“自动生成 CFO 月度经营分析报告”中导出 Markdown 报告到 `data/output/`。
+
 ## 数据质量检查
 
 ```bash

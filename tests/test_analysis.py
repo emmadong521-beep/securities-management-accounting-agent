@@ -4,6 +4,7 @@ from src.validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
     detect_management_insights,
+    export_cfo_report,
     generate_cfo_report_mock,
     get_pvm_detail,
     run_pvm_analysis,
@@ -52,3 +53,9 @@ def test_cfo_report_sections():
     report = generate_cfo_report_mock("2025-09")
     for section in ["本月经营概览", "主要差异", "业务线分析", "营业部盈利分析", "管理建议", "风险提示"]:
         assert section in report
+
+
+def test_cfo_report_can_be_exported():
+    output_path = export_cfo_report("2025-09")
+    assert output_path.exists()
+    assert output_path.name == "cfo_report_2025-09.md"

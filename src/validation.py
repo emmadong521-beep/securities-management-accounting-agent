@@ -228,18 +228,18 @@ def generate_cfo_report_mock(period: str) -> str:
     total_profit = biz["operating_profit"].sum()
     top_biz = biz.sort_values("operating_profit", ascending=False).iloc[0]
     weak_branch = branch.sort_values("operating_margin").iloc[0]
-    major = "\n".join(f"- {r.title}：{r.finding}，影响 {r.financial_impact:,.2f} 元。" for r in insights.itertuples())
+    major = "\n".join(f"- {r.title}：{r.finding}，影响 {r.financial_impact / 10000:,.2f} 万元。" for r in insights.itertuples())
     biz_table = "\n".join(
-        f"- {r.biz_line_id}: 收入 {r.revenue:,.2f} 元，经营利润 {r.operating_profit:,.2f} 元，贡献率 {r.profit_contribution_rate:.2%}"
+        f"- {r.biz_line_id}: 收入 {r.revenue / 10000:,.2f} 万元，经营利润 {r.operating_profit / 10000:,.2f} 万元，贡献率 {r.profit_contribution_rate:.2%}"
         for r in biz.itertuples()
     )
     return f"""# CFO 月度经营分析报告（{period}）
 
 ## 本月经营概览
-本月营业收入 {total_revenue:,.2f} 元，分摊后经营利润 {total_profit:,.2f} 元。利润贡献最高的业务线为 {top_biz['biz_line_id']}。
+本月营业收入 {total_revenue / 10000:,.2f} 万元，分摊后经营利润 {total_profit / 10000:,.2f} 万元。利润贡献最高的业务线为 {top_biz['biz_line_id']}。
 
 ## 主要差异
-经纪业务预实差异 {pvm['total_variance']:,.2f} 元，其中交易量影响 {pvm['volume_effect']:,.2f} 元，佣金率影响 {pvm['rate_effect']:,.2f} 元，混合影响 {pvm['mix_effect']:,.2f} 元。
+经纪业务预实差异 {pvm['total_variance'] / 10000:,.2f} 万元，其中交易量影响 {pvm['volume_effect'] / 10000:,.2f} 万元，佣金率影响 {pvm['rate_effect'] / 10000:,.2f} 万元，混合影响 {pvm['mix_effect'] / 10000:,.2f} 万元。
 
 ## 业务线分析
 {biz_table}
@@ -253,6 +253,13 @@ def generate_cfo_report_mock(period: str) -> str:
 ## 风险提示
 本报告基于合成明细数据和公开披露汇总口径校准，不代表真实长江证券内部经营数据；不构成投资建议。
 """
+
+
+def export_cfo_report(period: str) -> Path:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = OUTPUT_DIR / f"cfo_report_{period}.md"
+    output_path.write_text(generate_cfo_report_mock(period), encoding="utf-8")
+    return output_path
 
 
 def generate_chart_data(period: str) -> dict[str, pd.DataFrame]:
