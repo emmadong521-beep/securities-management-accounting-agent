@@ -373,7 +373,7 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
             if period:
                 task_context["period"] = period
         except Exception as exc:
-            llm_error = f"LLM 任务解析失败，已回退 Mock Agent：{type(exc).__name__}"
+            llm_error = f"LLM 任务解析失败，已回退 Mock Agent：{exc}"
             llm_mode = "Mock Agent"
 
     selected_period = str(task_context.get("period") or _extract_period(user_task, period))
@@ -382,7 +382,7 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
         try:
             plan = generate_management_plan_with_llm(task_context)
         except Exception as exc:
-            llm_error = f"LLM 计划生成失败，已使用 Mock 计划：{type(exc).__name__}"
+            llm_error = f"LLM 计划生成失败，已使用 Mock 计划：{exc}"
 
     intent = _task_type_from_intent(str(task_context.get("intent") or "profit_variance"))
     if intent == "BRANCH_MARGIN":
@@ -398,7 +398,7 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
         try:
             final = generate_management_final_answer_with_llm(user_task, result.plan, result.steps, mock_final)
         except Exception as exc:
-            llm_error = f"LLM 结论生成失败，已展示 Mock 结果：{type(exc).__name__}"
+            llm_error = f"LLM 结论生成失败，已展示 Mock 结果：{exc}"
             llm_mode = "Mock Agent"
             final = mock_final
     result.final_answer = final
