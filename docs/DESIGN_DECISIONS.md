@@ -37,7 +37,7 @@ validated month-end outputs when available.
 ### Make LLM optional
 
 The Volcengine Ark integration improves task parsing and language expression
-only. Missing configuration or API errors fall back to Mock Agent mode.
+only. Missing configuration or API errors use the deterministic fallback mode.
 
 ### Preserve drilldown
 

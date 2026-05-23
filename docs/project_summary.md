@@ -16,7 +16,7 @@
   分摊占比、客户结构和佣金率输出原因标签。
 - 增加经纪业务 What-if 情景模拟，计算交易量、佣金率和费用变化对
   收入及利润的影响。
-- 新增 deterministic mock Agent 层，将自然语言任务解析为计划，并真实
+- 新增 Deterministic Agent Mode，将自然语言任务解析为计划，并真实
   调用盈利能力、预算差异、PVM 和经营洞察工具。
 - 使用 Streamlit 和 Plotly 提供可交互经营看板和自动经营分析报告。
 
