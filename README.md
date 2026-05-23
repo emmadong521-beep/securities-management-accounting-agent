@@ -3,6 +3,7 @@
 > 面向证券公司 CFO 月度经营分析的管理会计 Agent，自动完成“业务线利润贡献 -> 经纪业务 PVM -> 营业部盈利穿透 -> What-if 模拟 -> 经营报告生成”的分析链路。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+[![CI](https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml)
 ![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen)
 ![Data Quality](https://img.shields.io/badge/data%20quality-PASS-brightgreen)
 ![Streamlit](https://img.shields.io/badge/streamlit-demo%20ready-ff4b4b)
@@ -50,7 +51,7 @@ python -m src.project_metrics
 6. Open “What-if 情景模拟” to estimate brokerage revenue and profit impact from volume, commission-rate, and expense changes.
 7. Open “Agent 工作台”; enter a natural-language task and review the plan, tool calls, observations, final answer, and follow-up response.
 
-Jump to: [Architecture](#architecture) | [Run Locally](#run-locally) | [Agent Workbench](#agent-workbench) | [Data Quality](#data-quality)
+Jump to: [Architecture](#architecture) | [Run Locally](#run-locally) | [Engineering Quality](#engineering-quality) | [Agent Workbench](#agent-workbench) | [Data Quality](#data-quality)
 
 ## Architecture
 
@@ -118,6 +119,35 @@ One-command local launch:
 ```bash
 ./scripts/run_demo.sh
 ```
+
+## Engineering Quality
+
+CI workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
+
+The GitHub Actions workflow runs on `push` and `pull_request` with Python 3.11 and `LLM_ENABLED=false`. It performs:
+
+- dependency installation with `pip install -e ".[dev]"`
+- synthetic data generation and DuckDB initialization
+- `python -m pytest -q`
+- `python -m pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html`
+- `python -m src.data_quality`
+- upload of `htmlcov` and `coverage.xml` as artifacts
+
+Local commands:
+
+```bash
+python -m pytest -q
+python -m pytest --cov=src --cov-report=term-missing --cov-report=html
+python -m src.data_quality
+make ci
+```
+
+Current local coverage summary: [`data/output/coverage_summary.md`](data/output/coverage_summary.md)
+
+Engineering docs:
+
+- [`docs/design_decisions.md`](docs/design_decisions.md)
+- [`docs/testing_and_quality.md`](docs/testing_and_quality.md)
 
 ## Agent Workbench
 
