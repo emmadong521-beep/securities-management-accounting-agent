@@ -75,6 +75,18 @@ python -m src.project_metrics
 7. Open “Agent 工作台”; enter a natural-language task and review the plan,
    tool calls, observations, final answer, and follow-up response.
 
+## Online Demo
+
+The project can be deployed to Streamlit Community Cloud in deterministic mode
+without API keys.
+
+Deployment guide:
+
+- [Streamlit Deployment](docs/STREAMLIT_DEPLOYMENT.md)
+
+After deployment, replace the placeholder Streamlit badge with the deployed app
+URL.
+
 ## Project Documentation
 
 - [Design Decisions](docs/DESIGN_DECISIONS.md)
