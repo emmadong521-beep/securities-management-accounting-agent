@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from .config import SYNTHETIC_DIR
+from .llm_client import call_llm, is_llm_available
 from .validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
@@ -35,6 +37,8 @@ class AgentResult:
     final_answer: str
     report_path: str | None
     chart_refs: list[str] | None
+    llm_mode: str = "Mock Agent"
+    llm_error: str | None = None
 
 
 def _extract_period(user_task: str, period: str | None) -> str:
@@ -60,6 +64,115 @@ def _task_type(user_task: str) -> str:
     if "经纪" in user_task or "佣金率" in user_task or "交易量" in user_task or "pvm" in task:
         return "BROKERAGE_PVM"
     return "PROFIT_VARIANCE"
+
+
+def _intent_from_task_type(task_type: str) -> str:
+    return {
+        "BRANCH_MARGIN": "branch_profitability",
+        "BROKERAGE_PVM": "brokerage_pvm",
+        "PROFIT_VARIANCE": "profit_variance",
+    }.get(task_type, "unknown")
+
+
+def _task_type_from_intent(intent: str) -> str:
+    return {
+        "branch_profitability": "BRANCH_MARGIN",
+        "brokerage_pvm": "BROKERAGE_PVM",
+        "profit_variance": "PROFIT_VARIANCE",
+        "cfo_report": "PROFIT_VARIANCE",
+    }.get(intent, "PROFIT_VARIANCE")
+
+
+def _fallback_task_context(user_task: str, available_periods: list[str], period: str | None = None) -> dict:
+    selected_period = _extract_period(user_task, period)
+    if selected_period not in available_periods:
+        selected_period = available_periods[0] if available_periods else "2025-09"
+    task_type = _task_type(user_task)
+    branch_name = None
+    for candidate in ["深圳", "上海", "北京", "广州", "杭州", "成都", "武汉", "南京", "重庆"]:
+        if candidate in user_task:
+            branch_name = candidate
+            break
+    return {
+        "intent": _intent_from_task_type(task_type),
+        "period": selected_period,
+        "branch_name": branch_name,
+        "focus": "基于管理会计指标、PVM 和经营洞察生成结论",
+    }
+
+
+def parse_management_task_with_llm(user_task: str, available_periods: list[str]) -> dict:
+    fallback = _fallback_task_context(user_task, available_periods)
+    if not is_llm_available():
+        return fallback
+    try:
+        content = call_llm(
+            [
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "user_task": user_task,
+                            "available_periods": available_periods,
+                            "allowed_intents": [
+                                "profit_variance",
+                                "brokerage_pvm",
+                                "branch_profitability",
+                                "cfo_report",
+                                "unknown",
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            ],
+            system_prompt=(
+                "你只负责解析证券公司管理会计 Agent 任务意图，不做金额计算。"
+                "必须只返回 JSON，对象字段为 intent, period, branch_name, focus。"
+            ),
+        )
+        parsed = json.loads(content)
+        intent = str(parsed.get("intent") or fallback["intent"])
+        if intent not in {"profit_variance", "brokerage_pvm", "branch_profitability", "cfo_report", "unknown"}:
+            intent = fallback["intent"]
+        parsed_period = parsed.get("period") if parsed.get("period") in available_periods else fallback["period"]
+        branch_name = parsed.get("branch_name") or fallback["branch_name"]
+        return {
+            "intent": intent,
+            "period": parsed_period,
+            "branch_name": branch_name,
+            "focus": str(parsed.get("focus") or fallback["focus"])[:120],
+        }
+    except Exception:
+        return fallback
+
+
+def _fallback_plan(task_context: dict) -> list[str]:
+    intent = task_context.get("intent")
+    if intent == "brokerage_pvm":
+        return ["执行经纪业务 PVM 拆解", "比较交易量和佣金率影响", "下钻预算与实际明细", "生成经营结论"]
+    if intent == "branch_profitability":
+        return ["查询营业部盈利能力", "定位关注营业部", "比较收入排名和利润率排名", "生成管理建议"]
+    return ["查询业务线利润贡献", "执行经纪业务 PVM", "下钻营业部盈利能力", "检测管理洞察", "生成经营结论"]
+
+
+def generate_management_plan_with_llm(task_context: dict) -> list[str]:
+    fallback = _fallback_plan(task_context)
+    if not is_llm_available():
+        return fallback
+    try:
+        content = call_llm(
+            [{"role": "user", "content": json.dumps(task_context, ensure_ascii=False)}],
+            system_prompt=(
+                "你为证券公司管理会计 Agent 生成 4-6 步分析计划。"
+                "计划应围绕查询业务线利润贡献、执行经纪业务 PVM、下钻营业部盈利能力、检测管理洞察、生成经营结论。"
+                "不要编造金额。每行输出一步计划，不要输出编号。"
+            ),
+        )
+        plan = [line.strip("- 1234567890.、") for line in content.splitlines() if line.strip()]
+        return plan[:6] or fallback
+    except Exception:
+        return fallback
 
 
 def _branch_master() -> pd.DataFrame:
@@ -95,14 +208,33 @@ def _major_pvm_effect(pvm: pd.Series) -> tuple[str, float]:
     return name, value
 
 
-def _run_profit_variance(period: str, user_task: str) -> AgentResult:
-    plan = [
-        "查询业务线分摊后盈利能力",
-        "检查经纪业务预算与实际差异",
-        "执行经纪业务 PVM 拆解",
-        "查询营业部盈利能力并识别低利润率对象",
-        "生成管理洞察和 CFO 报告",
-    ]
+def generate_management_final_answer_with_llm(
+    user_task: str,
+    plan: list[str],
+    steps: list[AgentStep],
+    mock_answer: str,
+) -> str:
+    if not is_llm_available():
+        return mock_answer
+    facts = {
+        "user_task": user_task,
+        "plan": plan,
+        "steps": [step.__dict__ for step in steps],
+        "mock_answer": mock_answer,
+    }
+    content = call_llm(
+        [{"role": "user", "content": json.dumps(facts, ensure_ascii=False, default=str)}],
+        system_prompt=(
+            "你是证券公司管理会计 Agent 的表达层。只能基于输入事实生成中文经营分析，"
+            "不得自行计算金额，不得编造业务线、营业部或指标。"
+            "输出包含核心结论、关键数字、主要驱动因素、建议动作和风险提示，金额单位保持万元。"
+        ),
+    )
+    return content.strip() or mock_answer
+
+
+def _run_profit_variance(period: str, user_task: str, plan: list[str] | None = None) -> AgentResult:
+    plan = plan or _fallback_plan({"intent": "profit_variance", "period": period})
     steps: list[AgentStep] = []
 
     biz = calculate_bizline_profitability(period)
@@ -153,13 +285,8 @@ def _run_profit_variance(period: str, user_task: str) -> AgentResult:
     return AgentResult(user_task, plan, steps, final, report_path, ["业务线利润贡献柱状图", "PVM 瀑布图", "营业部收入 vs 经营利润率散点图"])
 
 
-def _run_brokerage_pvm(period: str, user_task: str) -> AgentResult:
-    plan = [
-        "执行经纪业务 PVM 拆解",
-        "判断交易量影响和佣金率影响的相对贡献",
-        "查询经纪业务预算与实际明细",
-        "生成经营结论",
-    ]
+def _run_brokerage_pvm(period: str, user_task: str, plan: list[str] | None = None) -> AgentResult:
+    plan = plan or _fallback_plan({"intent": "brokerage_pvm", "period": period})
     steps: list[AgentStep] = []
     pvm = run_pvm_analysis(period, scope="BROKERAGE").iloc[0]
     major_effect, major_value = _major_pvm_effect(pvm)
@@ -197,15 +324,11 @@ def _run_brokerage_pvm(period: str, user_task: str) -> AgentResult:
     return AgentResult(user_task, plan, steps, final, None, ["PVM 瀑布图", "预算 vs 实际对比图", "Top negative variance 明细"])
 
 
-def _run_branch_margin(period: str, user_task: str) -> AgentResult:
-    plan = [
-        "查询营业部分摊后盈利能力",
-        "定位用户关注营业部",
-        "比较收入排名和利润率排名",
-        "生成管理建议",
-    ]
+def _run_branch_margin(period: str, user_task: str, plan: list[str] | None = None, branch_name: str | None = None) -> AgentResult:
+    plan = plan or _fallback_plan({"intent": "branch_profitability", "period": period})
     branch = calculate_branch_profitability(period)
-    branch_id = _target_branch_id(user_task, branch)
+    target_text = f"{user_task} {branch_name or ''}"
+    branch_id = _target_branch_id(target_text, branch)
     branch = branch.copy()
     branch["revenue_rank"] = branch["revenue"].rank(ascending=False, method="first").astype(int)
     branch["margin_rank"] = branch["operating_margin"].rank(ascending=False, method="first").astype(int)
@@ -233,24 +356,93 @@ def _run_branch_margin(period: str, user_task: str) -> AgentResult:
     return AgentResult(user_task, plan, steps, final, None, ["营业部收入 vs 经营利润率散点图", "营业部盈利能力排名表"])
 
 
-def run_management_accounting_agent(user_task: str, period: str | None = None) -> AgentResult:
-    selected_period = _extract_period(user_task, period)
-    intent = _task_type(user_task)
+def run_management_accounting_agent(user_task: str, period: str | None = None, use_llm: bool | None = None) -> AgentResult:
+    available_periods = [f"2025-{m:02d}" for m in range(1, 13)]
+    requested_llm = is_llm_available() if use_llm is None else bool(use_llm)
+    llm_error = None
+    llm_mode = "Mock Agent"
+    if requested_llm and is_llm_available():
+        llm_mode = "Volcengine Ark LLM Agent"
+    elif requested_llm:
+        llm_error = "LLM 配置不完整，已回退 Mock Agent。"
+
+    task_context = _fallback_task_context(user_task, available_periods, period)
+    if requested_llm and is_llm_available():
+        try:
+            task_context = parse_management_task_with_llm(user_task, available_periods)
+            if period:
+                task_context["period"] = period
+        except Exception as exc:
+            llm_error = f"LLM 任务解析失败，已回退 Mock Agent：{type(exc).__name__}"
+            llm_mode = "Mock Agent"
+
+    selected_period = str(task_context.get("period") or _extract_period(user_task, period))
+    plan = _fallback_plan(task_context)
+    if requested_llm and is_llm_available():
+        try:
+            plan = generate_management_plan_with_llm(task_context)
+        except Exception as exc:
+            llm_error = f"LLM 计划生成失败，已使用 Mock 计划：{type(exc).__name__}"
+
+    intent = _task_type_from_intent(str(task_context.get("intent") or "profit_variance"))
     if intent == "BRANCH_MARGIN":
-        return _run_branch_margin(selected_period, user_task)
-    if intent == "BROKERAGE_PVM":
-        return _run_brokerage_pvm(selected_period, user_task)
-    return _run_profit_variance(selected_period, user_task)
+        result = _run_branch_margin(selected_period, user_task, plan, task_context.get("branch_name"))
+    elif intent == "BROKERAGE_PVM":
+        result = _run_brokerage_pvm(selected_period, user_task, plan)
+    else:
+        result = _run_profit_variance(selected_period, user_task, plan)
+
+    mock_final = result.final_answer
+    final = mock_final
+    if requested_llm and is_llm_available():
+        try:
+            final = generate_management_final_answer_with_llm(user_task, result.plan, result.steps, mock_final)
+        except Exception as exc:
+            llm_error = f"LLM 结论生成失败，已展示 Mock 结果：{type(exc).__name__}"
+            llm_mode = "Mock Agent"
+            final = mock_final
+    result.final_answer = final
+    result.llm_mode = llm_mode
+    result.llm_error = llm_error
+    return result
 
 
 def _period_from_context(context: AgentResult) -> str:
     return _extract_period(context.user_task + " " + context.final_answer, None)
 
 
-def answer_management_followup(question: str, context: AgentResult) -> str:
+def answer_management_followup(question: str, context: AgentResult, use_llm: bool | None = None) -> str:
     question_norm = question.strip().lower()
     combined_observation = "\n".join(step.observation for step in context.steps)
     period = _period_from_context(context)
+    requested_llm = is_llm_available() if use_llm is None else bool(use_llm)
+    if requested_llm and is_llm_available() and not ("恢复" in question and "5%" in question):
+        try:
+            content = call_llm(
+                [
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "question": question,
+                                "final_answer": context.final_answer,
+                                "steps": [step.__dict__ for step in context.steps],
+                                "chart_refs": context.chart_refs,
+                            },
+                            ensure_ascii=False,
+                            default=str,
+                        ),
+                    }
+                ],
+                system_prompt=(
+                    "你回答证券公司管理会计 Agent 的追问。只能引用上下文已有事实，"
+                    "不得新增金额、业务线、营业部或指标。金额单位保持万元。"
+                ),
+            )
+            if content.strip():
+                return content.strip()
+        except Exception:
+            pass
 
     if "交易量" in question and "佣金率" in question:
         pvm = run_pvm_analysis(period, scope="BROKERAGE").iloc[0]

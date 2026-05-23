@@ -68,6 +68,33 @@ python3.11 -m venv .venv
 
 Streamlit 的“Agent 工作台”会展示用户任务、自动分析计划、工具调用轨迹、每一步观察结果、最终经营结论、关联图表和追问回答。第一版支持公司利润差异、经纪业务 PVM 归因、营业部收入高但利润率低三类任务。
 
+## Volcengine Ark LLM Integration
+
+本项目支持通过 OpenAI SDK 兼容方式接入火山引擎方舟大模型。未配置可用密钥时，系统会自动使用 Mock Agent。
+
+```bash
+cp .env.example .env
+```
+
+在 `.env` 中配置：
+
+```bash
+LLM_ENABLED=true
+LLM_PROVIDER=volcengine
+ARK_API_KEY=your_ark_api_key_here
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_MODEL=your_model_id_here
+LLM_TEMPERATURE=0.2
+LLM_TIMEOUT_SECONDS=60
+```
+
+说明：
+
+- `ARK_MODEL` 需要替换为火山方舟控制台中的实际 Model ID。
+- 不要提交 `.env`；仓库已通过 `.gitignore` 忽略本地 `.env`。
+- 未配置可用密钥或 `LLM_ENABLED=false` 时，系统自动使用 Mock Agent。
+- LLM 只用于自然语言理解、计划表达和经营结论组织；金额计算、PVM 分析、规则校验和管理洞察仍由本地代码完成。
+
 ## 数据质量检查
 
 ```bash

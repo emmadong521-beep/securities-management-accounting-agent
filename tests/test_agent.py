@@ -28,3 +28,15 @@ def test_management_followup_answers_pvm_and_recommendation():
     suggestion_answer = answer_management_followup("有什么管理建议？", result)
     assert "交易量影响" in pvm_answer or "佣金率影响" in pvm_answer
     assert "管理建议" in suggestion_answer
+
+
+def test_management_agent_falls_back_when_llm_unavailable(monkeypatch):
+    monkeypatch.setenv("LLM_ENABLED", "true")
+    monkeypatch.setenv("LLM_PROVIDER", "volcengine")
+    monkeypatch.setenv("ARK_API_KEY", "your_ark_api_key_here")
+    result = run_management_accounting_agent("请分析 2025-09 公司利润低于预算的主要原因。", use_llm=True)
+    tool_names = {step.tool_name for step in result.steps}
+    assert result.final_answer
+    assert result.llm_mode == "Mock Agent"
+    assert result.llm_error
+    assert "run_pvm_analysis" in tool_names or "calculate_bizline_profitability" in tool_names

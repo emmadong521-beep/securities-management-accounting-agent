@@ -13,6 +13,7 @@ import streamlit as st
 
 from src.agent import answer_management_followup, run_management_accounting_agent
 from src.db import load_synthetic_data_to_duckdb
+from src.llm_client import is_llm_available, load_llm_config
 from src.validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
@@ -89,6 +90,15 @@ def _recommended_demo_path() -> None:
 5. 在“自动生成 CFO 月度经营分析报告”中导出 Markdown 报告。
             """
         )
+
+
+def _llm_status_text(use_llm: bool) -> str:
+    config = load_llm_config()
+    if use_llm and is_llm_available():
+        return "当前模式：Volcengine Ark LLM Agent"
+    if use_llm and config.enabled and not is_llm_available():
+        return "当前模式：LLM 配置不完整，已回退 Mock Agent"
+    return "当前模式：Mock Agent"
 
 
 if page == "CFO 首页看板":
@@ -200,15 +210,25 @@ elif page == "自动生成 CFO 月度经营分析报告":
 else:
     st.subheader("Agent 工作台")
     st.caption("输入自然语言任务，Agent 会自动生成分析计划、调用管理会计分析工具，并展示观察结果和最终经营结论。")
+    llm_config = load_llm_config()
+    use_llm = st.checkbox("使用 LLM 增强回答", value=llm_config.enabled)
+    st.info(_llm_status_text(use_llm))
+    if use_llm and is_llm_available():
+        st.caption(f"当前模型：{llm_config.model}")
+    elif use_llm and llm_config.enabled:
+        st.warning("LLM 配置不完整，页面将自动使用 Mock Agent。")
     default_task = f"请分析 {period} 公司利润低于预算的主要原因。"
     user_task = st.text_area("自然语言任务", value=default_task, height=100)
     agent_period = st.selectbox("Agent 分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=int(period[-2:]) - 1)
 
     if st.button("运行 Agent"):
-        st.session_state["management_agent_result"] = run_management_accounting_agent(user_task, agent_period)
+        st.session_state["management_agent_use_llm"] = use_llm
+        st.session_state["management_agent_result"] = run_management_accounting_agent(user_task, agent_period, use_llm=use_llm)
 
     result = st.session_state.get("management_agent_result")
     if result:
+        if result.llm_error:
+            st.warning(result.llm_error)
         st.subheader("Agent 分析计划")
         for idx, item in enumerate(result.plan, start=1):
             st.markdown(f"{idx}. {item}")
@@ -236,4 +256,4 @@ else:
 
         followup = st.text_input("追问", placeholder="例如：交易量影响和佣金率影响哪个更大？有什么管理建议？")
         if followup:
-            st.write(answer_management_followup(followup, result))
+            st.write(answer_management_followup(followup, result, use_llm=st.session_state.get("management_agent_use_llm", use_llm)))
