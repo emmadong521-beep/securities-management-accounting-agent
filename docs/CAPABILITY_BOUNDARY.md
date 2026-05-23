@@ -2,9 +2,7 @@
 
 ## Positioning
 
-This project focuses on management accounting analysis for securities
-companies: business-line profitability, brokerage PVM, branch profitability,
-high-revenue low-profit detection, and What-if simulation.
+This project focuses on management accounting analysis for securities companies: business-line profitability, brokerage PVM, branch profitability, high-revenue low-profit detection, and What-if simulation.
 
 ## Capability Comparison
 
@@ -24,4 +22,3 @@ high-revenue low-profit detection, and What-if simulation.
 - Optional use of project-one validated outputs.
 - No real planning system integration.
 - LLM enhances explanation only.
-
