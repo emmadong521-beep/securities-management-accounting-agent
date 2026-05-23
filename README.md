@@ -63,10 +63,52 @@ python3.11 -m venv .venv
 - `run_pvm_analysis`
 - `calculate_branch_profitability`
 - `detect_management_insights`
+- `detect_high_revenue_low_profit_branches`
+- `explain_high_revenue_low_profit_branch`
+- `simulate_brokerage_recovery`
 - `generate_cfo_report_mock`
 - `export_cfo_report`
 
-Streamlit 的“Agent 工作台”会展示用户任务、自动分析计划、工具调用轨迹、每一步观察结果、最终经营结论、关联图表和追问回答。第一版支持公司利润差异、经纪业务 PVM 归因、营业部收入高但利润率低三类任务。
+Streamlit 的“Agent 工作台”会展示用户任务、自动分析计划、工具调用轨迹、每一步观察结果、最终经营结论、关联图表和追问回答。支持公司利润差异、经纪业务 PVM 归因、营业部高收入低利润、What-if 情景模拟和 CFO 报告生成。
+
+## 项目一可信数据接入
+
+项目二可独立使用内置合成数据，也可读取项目一导出的月结校验数据。配置方式：
+
+```bash
+RECON_PROJECT_OUTPUT_DIR=/path/to/securities-month-end-recon-agent/data/output
+USE_RECON_VALIDATED_DATA=false
+```
+
+当 `USE_RECON_VALIDATED_DATA=true` 且目标目录存在 `validated_actual_revenue.csv`、`validated_allocated_expense.csv` 时，页面会显示当前使用项目一导出的可信月结数据；如文件不存在，会自动回退项目二合成数据。
+
+## 高收入低利润营业部分析
+
+`src/profitability_insights.py` 计算营业部收入排名、经营利润率排名、费用分摊占比、客户结构、平均佣金率和交易量，识别收入靠前但分摊后利润率偏低的营业部。输出原因标签包括：
+
+- `HIGH_SYSTEM_COST`
+- `LOW_COMMISSION_RATE`
+- `HIGH_INSTITUTION_CLIENT_RATIO`
+- `HIGH_MARKETING_EXPENSE`
+- `HIGH_HQ_ALLOCATION`
+- `LOW_OPERATING_MARGIN`
+
+Streamlit 的“营业部盈利穿透分析”展示收入排名 vs 利润率排名、专项清单、散点图、费用结构和单个营业部解释卡片。
+
+## What-if 情景模拟
+
+`src/what_if.py` 基于经纪佣金收入公式 `交易量 × 平均佣金率` 执行情景模拟：
+
+```python
+simulate_brokerage_recovery(
+    period="2025-09",
+    trade_volume_change_pct=0.05,
+    commission_rate_change_bp=0.0,
+    expense_change_pct=0.0,
+)
+```
+
+模拟输出基准交易量、模拟交易量、基准佣金率、模拟佣金率、基准收入、模拟收入、收入影响、费用影响和利润影响。金额计算由代码完成，LLM 只负责表达。
 
 ## Volcengine Ark LLM Integration
 
@@ -135,6 +177,6 @@ LLM_TIMEOUT_SECONDS=60
 
 ## 后续扩展方向
 
-- 接入项目一修正后的月结数据作为 actual_revenue 和 allocated_expense 来源
+- 深化项目一月结校验数据与项目二管理会计口径映射
 - 增加产品、客户经理、渠道、投行项目等维度
 - 接入 LLM API 生成更自然的管理建议，但保持所有金额由代码计算

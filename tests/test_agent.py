@@ -22,12 +22,29 @@ def test_agent_steps_include_core_tools():
     assert "run_pvm_analysis" in tool_names or "calculate_bizline_profitability" in tool_names
 
 
+def test_agent_runs_high_revenue_low_profit_toolchain():
+    result = run_management_accounting_agent("为什么深圳营业部收入排名靠前，但经营利润率偏低？", period="2025-09", use_llm=False)
+    tool_names = {step.tool_name for step in result.steps}
+    assert "detect_high_revenue_low_profit_branches" in tool_names
+    assert "explain_high_revenue_low_profit_branch" in tool_names
+    assert "关键数字" in result.final_answer
+
+
+def test_agent_runs_what_if_toolchain():
+    result = run_management_accounting_agent("如果经纪业务交易量恢复 5%，收入和利润能改善多少？", period="2025-09", use_llm=False)
+    tool_names = {step.tool_name for step in result.steps}
+    assert "simulate_brokerage_recovery" in tool_names
+    assert "收入影响" in result.final_answer
+
+
 def test_management_followup_answers_pvm_and_recommendation():
     result = run_management_accounting_agent("请分析 2025-09 公司利润低于预算的主要原因。", use_llm=False)
     pvm_answer = answer_management_followup("交易量影响和佣金率影响哪个更大？", result, use_llm=False)
     suggestion_answer = answer_management_followup("有什么管理建议？", result, use_llm=False)
+    what_if_answer = answer_management_followup("如果交易量恢复 5%，影响如何估算？", result, use_llm=False)
     assert "交易量影响" in pvm_answer or "佣金率影响" in pvm_answer
     assert "管理建议" in suggestion_answer
+    assert "交易量恢复 5%" in what_if_answer
 
 
 def test_management_agent_falls_back_when_llm_unavailable(monkeypatch):

@@ -14,6 +14,12 @@ import streamlit as st
 from src.agent import answer_management_followup, run_management_accounting_agent
 from src.db import load_synthetic_data_to_duckdb
 from src.llm_client import explain_llm_config_status, is_llm_available, load_llm_config
+from src.profitability_insights import (
+    calculate_revenue_margin_rank_gap,
+    detect_high_revenue_low_profit_branches,
+    explain_high_revenue_low_profit_branch,
+)
+from src.recon_data_loader import get_recon_data_status
 from src.validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
@@ -24,6 +30,7 @@ from src.validation import (
     run_brokerage_budget_variance,
     run_pvm_analysis,
 )
+from src.what_if import simulate_brokerage_recovery
 
 
 st.set_page_config(page_title="证券公司管理会计多维经营分析 Agent", layout="wide")
@@ -31,7 +38,20 @@ st.title("证券公司管理会计多维经营分析 Agent")
 
 load_synthetic_data_to_duckdb()
 period = st.sidebar.selectbox("分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=8)
-page = st.sidebar.radio("功能", ["CFO 首页看板", "业务线利润贡献分析", "经纪业务预实差异归因", "营业部盈利能力排名", "多维下钻筛选器", "自动生成 CFO 月度经营分析报告", "Agent 工作台"])
+page = st.sidebar.radio(
+    "功能",
+    [
+        "CFO 首页看板",
+        "业务线利润贡献分析",
+        "经纪业务预实差异归因",
+        "营业部盈利能力排名",
+        "营业部盈利穿透分析",
+        "What-if 情景模拟",
+        "多维下钻筛选器",
+        "自动生成 CFO 月度经营分析报告",
+        "Agent 工作台",
+    ],
+)
 
 biz = calculate_bizline_profitability(period)
 branch = calculate_branch_profitability(period)
@@ -57,6 +77,12 @@ AMOUNT_COLUMNS = {
     "revenue_variance",
     "profit_variance",
     "financial_impact",
+    "revenue_impact",
+    "profit_impact",
+    "base_revenue",
+    "simulated_revenue",
+    "base_expense",
+    "simulated_expense",
 }
 
 
@@ -118,6 +144,8 @@ def _show_llm_config_status() -> None:
 
 if page == "CFO 首页看板":
     _recommended_demo_path()
+    recon_status = get_recon_data_status()
+    st.info(f"数据来源状态：当前使用：{recon_status['source']}。{recon_status['message']}")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("营业收入", f"{biz['revenue'].sum()/10000:,.0f} 万元")
     c2.metric("经营利润", f"{biz['operating_profit'].sum()/10000:,.0f} 万元")
@@ -203,6 +231,65 @@ elif page == "营业部盈利能力排名":
     fig.update_yaxes(title="经营利润（万元）")
     st.plotly_chart(fig, width="stretch")
     st.caption("排名表基于费用分摊后的经营利润，避免只看收入规模。")
+
+elif page == "营业部盈利穿透分析":
+    st.subheader("收入排名 vs 经营利润率排名")
+    gap = calculate_revenue_margin_rank_gap(period)
+    high_low = detect_high_revenue_low_profit_branches(period)
+    st.dataframe(_amount_view(gap.sort_values("revenue_rank")), width="stretch")
+    st.subheader("高收入低利润营业部清单")
+    st.dataframe(_amount_view(high_low), width="stretch")
+    scatter_df = gap.assign(**{"收入（万元）": gap["revenue"] / 10000})
+    fig = px.scatter(
+        scatter_df,
+        x="收入（万元）",
+        y="operating_margin",
+        color="reason_tags" if "reason_tags" in scatter_df.columns else "branch_id",
+        size="allocated_expense",
+        hover_name="branch_name",
+        title="营业部收入 vs 经营利润率（收入单位：万元）",
+    )
+    fig.update_xaxes(title="收入（万元）")
+    fig.update_yaxes(title="经营利润率")
+    st.plotly_chart(fig, width="stretch")
+    st.caption("右侧但位置偏低的营业部表示收入规模较高，但费用分摊后利润率偏低。")
+    if not gap.empty:
+        selected_branch = st.selectbox("选择营业部", gap["branch_id"].tolist(), format_func=lambda bid: f"{bid} - {gap[gap['branch_id'] == bid]['branch_name'].iloc[0]}")
+        detail = explain_high_revenue_low_profit_branch(period, selected_branch)
+        with st.container(border=True):
+            st.subheader("单个营业部原因解释")
+            st.write(detail["explanation"])
+            st.write(f"建议：{detail['recommendation']}")
+        expense_cols = ["salary_expense", "rent_expense", "marketing_expense", "it_allocated_expense", "market_data_allocated_expense", "hq_allocated_expense"]
+        row = gap[gap["branch_id"] == selected_branch].iloc[0]
+        expense_df = pd.DataFrame({"费用类型": expense_cols, "金额（万元）": [float(row.get(col, 0)) / 10000 for col in expense_cols]})
+        pie = px.pie(expense_df, names="费用类型", values="金额（万元）", title="费用分摊结构（万元）")
+        st.plotly_chart(pie, width="stretch")
+        st.caption("费用结构图用于判断低利润率来自系统、行情、总部、营销还是基础运营成本。")
+
+elif page == "What-if 情景模拟":
+    st.subheader("What-if 情景模拟")
+    c1, c2, c3 = st.columns(3)
+    trade_pct = c1.slider("交易量变化", min_value=-0.20, max_value=0.30, value=0.05, step=0.01)
+    rate_bp = c2.number_input("佣金率变化（bp）", value=0.0, step=0.5)
+    expense_pct = c3.slider("费用变化", min_value=-0.10, max_value=0.20, value=0.0, step=0.01)
+    result = simulate_brokerage_recovery(period, trade_pct, rate_bp, expense_pct)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("收入影响", f"{result['revenue_impact']/10000:,.2f} 万元")
+    k2.metric("利润影响", f"{result['profit_impact']/10000:,.2f} 万元")
+    k3.metric("模拟收入", f"{result['simulated_revenue']/10000:,.2f} 万元")
+    k4.metric("模拟费用", f"{result['simulated_expense']/10000:,.2f} 万元")
+    waterfall = go.Figure(go.Waterfall(
+        name="What-if",
+        orientation="v",
+        measure=["absolute", "relative", "relative", "total"],
+        x=["基准收入", "收入影响", "费用增量影响", "模拟利润影响"],
+        y=[result["base_revenue"] / 10000, result["revenue_impact"] / 10000, -(result["simulated_expense"] - result["base_expense"]) / 10000, result["profit_impact"] / 10000],
+    ))
+    waterfall.update_layout(title="What-if 收入与利润影响（万元）", yaxis_title="金额（万元）")
+    st.plotly_chart(waterfall, width="stretch")
+    st.caption("情景模拟用交易量、佣金率和费用变化计算收入与利润影响，金额由代码完成。")
+    st.write(result["explanation"])
 
 elif page == "多维下钻筛选器":
     selected_biz = st.multiselect("业务线", biz["biz_line_id"].tolist(), default=biz["biz_line_id"].tolist())

@@ -219,15 +219,40 @@ def detect_management_insights(period: str) -> pd.DataFrame:
     return df
 
 
-def generate_cfo_report_mock(period: str) -> str:
+def generate_cfo_report_mock(period: str, what_if_result: dict | None = None) -> str:
     biz = calculate_bizline_profitability(period)
     branch = calculate_branch_profitability(period)
     pvm = run_pvm_analysis(period, "BROKERAGE").iloc[0]
     insights = detect_management_insights(period)
+    from .profitability_insights import detect_high_revenue_low_profit_branches, explain_high_revenue_low_profit_branch
+    from .recon_data_loader import get_recon_data_status
+    from .what_if import simulate_brokerage_recovery
+
     total_revenue = biz["revenue"].sum()
     total_profit = biz["operating_profit"].sum()
     top_biz = biz.sort_values("operating_profit", ascending=False).iloc[0]
     weak_branch = branch.sort_values("operating_margin").iloc[0]
+    high_low = detect_high_revenue_low_profit_branches(period)
+    if high_low.empty:
+        high_low_text = "- 本月未识别出显著的高收入低利润营业部。"
+    else:
+        high_low_rows = []
+        for row in high_low.head(3).itertuples():
+            detail = explain_high_revenue_low_profit_branch(period, str(row.branch_id))
+            high_low_rows.append(
+                f"- {detail['branch_name']}：收入 {detail['revenue'] / 10000:,.2f} 万元，"
+                f"收入排名第 {detail['revenue_rank']}，经营利润率 {detail['operating_margin']:.2%}，"
+                f"利润率排名第 {detail['margin_rank']}，原因标签 {', '.join(detail['reason_tags'])}。"
+            )
+        high_low_text = "\n".join(high_low_rows)
+    if what_if_result is None:
+        what_if_result = simulate_brokerage_recovery(period)
+    what_if_text = (
+        f"交易量变化 {what_if_result['trade_volume_change_pct']:.1%}、佣金率变化 {what_if_result['commission_rate_change_bp']:.2f}bp、"
+        f"费用变化 {what_if_result['expense_change_pct']:.1%} 时，经纪收入影响 "
+        f"{what_if_result['revenue_impact'] / 10000:,.2f} 万元，利润影响 {what_if_result['profit_impact'] / 10000:,.2f} 万元。"
+    )
+    data_status = get_recon_data_status()
     major = "\n".join(f"- {r.title}：{r.finding}，影响 {r.financial_impact / 10000:,.2f} 万元。" for r in insights.itertuples())
     biz_table = "\n".join(
         f"- {r.biz_line_id}: 收入 {r.revenue / 10000:,.2f} 万元，经营利润 {r.operating_profit / 10000:,.2f} 万元，贡献率 {r.profit_contribution_rate:.2%}"
@@ -241,24 +266,36 @@ def generate_cfo_report_mock(period: str) -> str:
 ## 主要差异
 经纪业务预实差异 {pvm['total_variance'] / 10000:,.2f} 万元，其中交易量影响 {pvm['volume_effect'] / 10000:,.2f} 万元，佣金率影响 {pvm['rate_effect'] / 10000:,.2f} 万元，混合影响 {pvm['mix_effect'] / 10000:,.2f} 万元。
 
-## 业务线分析
+## 业务线分析 / 业务线利润贡献
 {biz_table}
+
+## 经纪业务 PVM 拆解
+预算收入 {pvm['budget_revenue'] / 10000:,.2f} 万元，实际收入 {pvm['actual_revenue'] / 10000:,.2f} 万元。交易量影响、佣金率影响和混合影响均由本地 PVM 函数计算。
 
 ## 营业部盈利分析
 利润率最低营业部为 {weak_branch['branch_id']}，经营利润率 {weak_branch['operating_margin']:.2%}。高收入营业部需要结合 IT、总部和行情成本分摊后评价真实贡献。
+
+## 高收入低利润营业部分析
+{high_low_text}
+
+## What-if 情景模拟结果
+{what_if_text}
 
 ## 管理建议
 {major}
 
 ## 风险提示
 本报告基于合成明细数据和公开披露汇总口径校准，不代表真实长江证券内部经营数据；不构成投资建议。
+
+## 数据来源说明
+当前数据来源：{data_status['source']}。{data_status['message']}
 """
 
 
-def export_cfo_report(period: str) -> Path:
+def export_cfo_report(period: str, what_if_result: dict | None = None) -> Path:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT_DIR / f"cfo_report_{period}.md"
-    output_path.write_text(generate_cfo_report_mock(period), encoding="utf-8")
+    output_path.write_text(generate_cfo_report_mock(period, what_if_result), encoding="utf-8")
     return output_path
 
 

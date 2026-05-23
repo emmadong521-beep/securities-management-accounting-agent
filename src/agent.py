@@ -9,6 +9,7 @@ import pandas as pd
 
 from .config import SYNTHETIC_DIR
 from .llm_client import call_llm, is_llm_available
+from .profitability_insights import detect_high_revenue_low_profit_branches, explain_high_revenue_low_profit_branch
 from .validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
@@ -18,6 +19,7 @@ from .validation import (
     run_brokerage_budget_variance,
     run_pvm_analysis,
 )
+from .what_if import simulate_brokerage_recovery
 
 
 @dataclass
@@ -27,6 +29,8 @@ class AgentStep:
     tool_name: str
     tool_input: dict
     observation: str
+    reason_for_tool: str = ""
+    confidence: float | None = None
 
 
 @dataclass
@@ -39,6 +43,19 @@ class AgentResult:
     chart_refs: list[str] | None
     llm_mode: str = "Mock Agent"
     llm_error: str | None = None
+
+
+TOOL_REGISTRY = {
+    "calculate_bizline_profitability": "计算业务线分摊后利润贡献",
+    "calculate_branch_profitability": "计算营业部收入、成本、分摊费用和经营利润率",
+    "run_brokerage_budget_variance": "计算经纪业务预算与实际差异",
+    "run_pvm_analysis": "执行经纪佣金收入价量结构拆解",
+    "detect_management_insights": "识别管理会计经营洞察",
+    "detect_high_revenue_low_profit_branches": "识别高收入低利润营业部",
+    "explain_high_revenue_low_profit_branch": "解释单个营业部收入高但利润率低的原因",
+    "simulate_brokerage_recovery": "执行经纪业务交易量、佣金率和费用 What-if 测算",
+    "generate_cfo_report_mock": "生成 CFO 月度经营分析报告",
+}
 
 
 def _extract_period(user_task: str, period: str | None) -> str:
@@ -59,6 +76,10 @@ def _format_amount(value: float) -> str:
 
 def _task_type(user_task: str) -> str:
     task = user_task.lower()
+    if "如果" in user_task or "恢复" in user_task or "what-if" in task or "what if" in task or "bp" in task or "%" in user_task:
+        return "WHAT_IF"
+    if "高收入" in user_task or "低利润" in user_task or ("收入排名" in user_task and "利润率" in user_task):
+        return "HIGH_REVENUE_LOW_PROFIT"
     if "营业部" in user_task or "利润率" in user_task or "深圳" in user_task or "上海" in user_task:
         return "BRANCH_MARGIN"
     if "经纪" in user_task or "佣金率" in user_task or "交易量" in user_task or "pvm" in task:
@@ -69,7 +90,9 @@ def _task_type(user_task: str) -> str:
 def _intent_from_task_type(task_type: str) -> str:
     return {
         "BRANCH_MARGIN": "branch_profitability",
+        "HIGH_REVENUE_LOW_PROFIT": "high_revenue_low_profit",
         "BROKERAGE_PVM": "brokerage_pvm",
+        "WHAT_IF": "what_if",
         "PROFIT_VARIANCE": "profit_variance",
     }.get(task_type, "unknown")
 
@@ -77,7 +100,9 @@ def _intent_from_task_type(task_type: str) -> str:
 def _task_type_from_intent(intent: str) -> str:
     return {
         "branch_profitability": "BRANCH_MARGIN",
+        "high_revenue_low_profit": "HIGH_REVENUE_LOW_PROFIT",
         "brokerage_pvm": "BROKERAGE_PVM",
+        "what_if": "WHAT_IF",
         "profit_variance": "PROFIT_VARIANCE",
         "cfo_report": "PROFIT_VARIANCE",
     }.get(intent, "PROFIT_VARIANCE")
@@ -118,6 +143,8 @@ def parse_management_task_with_llm(user_task: str, available_periods: list[str])
                                 "profit_variance",
                                 "brokerage_pvm",
                                 "branch_profitability",
+                                "high_revenue_low_profit",
+                                "what_if",
                                 "cfo_report",
                                 "unknown",
                             ],
@@ -133,7 +160,7 @@ def parse_management_task_with_llm(user_task: str, available_periods: list[str])
         )
         parsed = json.loads(content)
         intent = str(parsed.get("intent") or fallback["intent"])
-        if intent not in {"profit_variance", "brokerage_pvm", "branch_profitability", "cfo_report", "unknown"}:
+        if intent not in {"profit_variance", "brokerage_pvm", "branch_profitability", "high_revenue_low_profit", "what_if", "cfo_report", "unknown"}:
             intent = fallback["intent"]
         parsed_period = parsed.get("period") if parsed.get("period") in available_periods else fallback["period"]
         branch_name = parsed.get("branch_name") or fallback["branch_name"]
@@ -151,6 +178,10 @@ def _fallback_plan(task_context: dict) -> list[str]:
     intent = task_context.get("intent")
     if intent == "brokerage_pvm":
         return ["执行经纪业务 PVM 拆解", "比较交易量和佣金率影响", "下钻预算与实际明细", "生成经营结论"]
+    if intent == "high_revenue_low_profit":
+        return ["计算营业部盈利能力", "识别高收入低利润营业部", "解释目标营业部原因标签", "生成管理建议"]
+    if intent == "what_if":
+        return ["读取经纪业务当前交易量和佣金率", "执行交易量、佣金率和费用情景测算", "计算收入和利润影响", "生成风险提示和建议动作"]
     if intent == "branch_profitability":
         return ["查询营业部盈利能力", "定位关注营业部", "比较收入排名和利润率排名", "生成管理建议"]
     return ["查询业务线利润贡献", "执行经纪业务 PVM", "下钻营业部盈利能力", "检测管理洞察", "生成经营结论"]
@@ -165,7 +196,7 @@ def generate_management_plan_with_llm(task_context: dict) -> list[str]:
             [{"role": "user", "content": json.dumps(task_context, ensure_ascii=False)}],
             system_prompt=(
                 "你为证券公司管理会计 Agent 生成 4-6 步分析计划。"
-                "计划应围绕查询业务线利润贡献、执行经纪业务 PVM、下钻营业部盈利能力、检测管理洞察、生成经营结论。"
+                "计划应围绕查询业务线利润贡献、执行经纪业务 PVM、下钻营业部盈利能力、识别高收入低利润、执行 What-if、检测管理洞察、生成经营结论。"
                 "不要编造金额。每行输出一步计划，不要输出编号。"
             ),
         )
@@ -277,10 +308,11 @@ def _run_profit_variance(period: str, user_task: str, plan: list[str] | None = N
     steps.append(AgentStep(7, "保存报告文件，便于后续复核。", "export_cfo_report", {"period": period}, f"报告路径：{report_path}"))
 
     final = (
-        f"{period} 经营分析结论：公司分摊后经营利润为 {_format_amount(total_profit)}。"
-        f"经纪业务收入差异为 {_format_amount(brokerage_revenue_variance)}，其中主要驱动为{major_effect}"
-        f"（{_format_amount(major_value)}）。利润率最低营业部为 {_branch_label(str(weak_branch['branch_id']))}。"
-        f"管理洞察提示：{titles}。"
+        f"核心结论：{period} 公司分摊后经营利润为 {_format_amount(total_profit)}。"
+        f"关键数字：经纪业务收入差异 {_format_amount(brokerage_revenue_variance)}，主要驱动为{major_effect}"
+        f"（{_format_amount(major_value)}）。主要驱动因素：利润率最低营业部为 {_branch_label(str(weak_branch['branch_id']))}，"
+        f"管理洞察包括 {titles}。建议动作：优先处理经纪交易量、低佣客户定价和费用分摊后低利润网点。"
+        f"风险提示：结论基于合成经营明细和本地规则计算，需结合真实业务审批口径复核。"
     )
     return AgentResult(user_task, plan, steps, final, report_path, ["业务线利润贡献柱状图", "PVM 瀑布图", "营业部收入 vs 经营利润率散点图"])
 
@@ -317,9 +349,11 @@ def _run_brokerage_pvm(period: str, user_task: str, plan: list[str] | None = Non
         )
     )
     final = (
-        f"{period} 经纪业务收入低于预算的主要驱动是{major_effect}，金额为 {_format_amount(major_value)}。"
-        f"交易量影响为 {_format_amount(float(pvm['volume_effect']))}，佣金率影响为 {_format_amount(float(pvm['rate_effect']))}，"
-        f"混合影响为 {_format_amount(float(pvm['mix_effect']))}。建议优先复核低佣客户结构和交易量恢复情况。"
+        f"核心结论：{period} 经纪业务收入低于预算的主要驱动是{major_effect}。"
+        f"关键数字：{major_effect}为 {_format_amount(major_value)}，交易量影响 {_format_amount(float(pvm['volume_effect']))}，"
+        f"佣金率影响 {_format_amount(float(pvm['rate_effect']))}，混合影响 {_format_amount(float(pvm['mix_effect']))}。"
+        f"主要驱动因素：交易量下降与佣金率下行共同拖累收入。建议动作：复核低佣客户结构和交易量恢复计划。"
+        f"风险提示：PVM 按交易量乘平均佣金率拆解，未覆盖全部市场和产品结构变化。"
     )
     return AgentResult(user_task, plan, steps, final, None, ["PVM 瀑布图", "预算 vs 实际对比图", "Top negative variance 明细"])
 
@@ -348,12 +382,140 @@ def _run_branch_margin(period: str, user_task: str, plan: list[str] | None = Non
         ),
     ]
     final = (
-        f"{period} {label} 收入为 {_format_amount(float(row['revenue']))}，收入排名第 {int(row['revenue_rank'])}；"
-        f"经营利润率为 {row['operating_margin']:.2%}，利润率排名第 {int(row['margin_rank'])}。"
-        f"若收入排名靠前但利润率偏低，通常说明客户或产品消耗的 IT、行情、总部管理等分摊成本较高，"
-        f"或佣金率低于资源占用水平。建议按客户分层和产品类型复核服务成本与定价。"
+        f"核心结论：{period} {label} 收入为 {_format_amount(float(row['revenue']))}，收入排名第 {int(row['revenue_rank'])}；"
+        f"关键数字：经营利润率 {row['operating_margin']:.2%}，利润率排名第 {int(row['margin_rank'])}。"
+        f"主要驱动因素：客户或产品消耗的 IT、行情、总部管理等分摊成本较高，或佣金率低于资源占用水平。"
+        f"建议动作：按客户分层和产品类型复核服务成本与定价。风险提示：需结合分摊规则和客户协议进一步复核。"
     )
     return AgentResult(user_task, plan, steps, final, None, ["营业部收入 vs 经营利润率散点图", "营业部盈利能力排名表"])
+
+
+def _run_high_revenue_low_profit(period: str, user_task: str, plan: list[str] | None = None, branch_name: str | None = None) -> AgentResult:
+    plan = plan or _fallback_plan({"intent": "high_revenue_low_profit", "period": period})
+    branch = calculate_branch_profitability(period)
+    high_low = detect_high_revenue_low_profit_branches(period)
+    steps = [
+        AgentStep(
+            1,
+            "先计算营业部分摊后盈利能力，形成收入和利润率基础排名。",
+            "calculate_branch_profitability",
+            {"period": period},
+            f"共返回 {len(branch)} 个营业部，最高收入营业部为 {branch.sort_values('revenue', ascending=False).iloc[0]['branch_id']}。",
+            "高收入低利润分析需要先建立收入、费用和利润率基线。",
+            0.93,
+        ),
+        AgentStep(
+            2,
+            "识别收入靠前但经营利润率偏低或费用分摊偏高的营业部。",
+            "detect_high_revenue_low_profit_branches",
+            {"period": period},
+            f"识别到 {len(high_low)} 个高收入低利润营业部。",
+            "规则筛选能快速定位看似赚钱但真实贡献不足的机构。",
+            0.9,
+        ),
+    ]
+    target_id = None
+    if branch_name:
+        master = _branch_master()
+        hit = master[(master["city"].astype(str).str.contains(str(branch_name), na=False)) | (master["branch_name"].astype(str).str.contains(str(branch_name), na=False))]
+        if not hit.empty:
+            target_id = str(hit.iloc[0]["branch_id"])
+    if target_id is None:
+        if not high_low.empty:
+            target_id = str(high_low.iloc[0]["branch_id"])
+        else:
+            target_id = _target_branch_id(user_task, branch)
+    detail = explain_high_revenue_low_profit_branch(period, target_id)
+    steps.append(
+        AgentStep(
+            3,
+            "对目标营业部下钻原因标签和关键指标。",
+            "explain_high_revenue_low_profit_branch",
+            {"period": period, "branch_id": target_id},
+            detail["explanation"],
+            "单点解释用于输出可执行的费用、客户结构和定价建议。",
+            0.88,
+        )
+    )
+    final = (
+        f"核心结论：{period} {detail['branch_name']} 收入 {_format_amount(detail['revenue'])}，"
+        f"收入排名第 {detail['revenue_rank']}，但经营利润率 {detail['operating_margin']:.2%}，"
+        f"利润率排名第 {detail['margin_rank']}。关键数字：分摊费用占收入比 {detail['allocated_expense_ratio']:.2%}，"
+        f"平均佣金率 {detail['avg_commission_rate']:.5%}。主要驱动因素：{', '.join(detail['reason_tags'])}。"
+        f"建议动作：{detail['recommendation']} 风险提示：需结合客户服务协议和分摊规则复核后再调整定价。"
+    )
+    return AgentResult(user_task, plan, steps, final, None, ["营业部盈利穿透分析", "费用分摊结构图"])
+
+
+def _parse_pct_from_task(user_task: str, default: float = 0.05) -> float:
+    match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*%", user_task)
+    if match:
+        return float(match.group(1)) / 100
+    return default
+
+
+def _parse_bp_from_task(user_task: str) -> float:
+    match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*bp", user_task, flags=re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    if "下降" in user_task and "1" in user_task and "佣金率" in user_task:
+        return -1.0
+    return 0.0
+
+
+def _parse_expense_pct_from_task(user_task: str) -> float:
+    if "费用" not in user_task:
+        return 0.0
+    matches = re.findall(r"([+-]?\d+(?:\.\d+)?)\s*%", user_task)
+    if len(matches) >= 2:
+        return float(matches[-1]) / 100
+    if "增长" in user_task or "上升" in user_task:
+        return 0.02 if "2" in user_task else 0.0
+    return 0.0
+
+
+def _run_what_if(period: str, user_task: str, plan: list[str] | None = None) -> AgentResult:
+    plan = plan or _fallback_plan({"intent": "what_if", "period": period})
+    trade_pct = _parse_pct_from_task(user_task, 0.05)
+    rate_bp = _parse_bp_from_task(user_task)
+    expense_pct = _parse_expense_pct_from_task(user_task)
+    result = simulate_brokerage_recovery(period, trade_pct, rate_bp, expense_pct)
+    steps = [
+        AgentStep(
+            1,
+            "读取经纪业务实际交易量、平均佣金率和费用基线。",
+            "run_pvm_analysis",
+            {"period": period, "scope": "BROKERAGE"},
+            (
+                f"基准交易量 {result['base_trade_volume']:,.2f}，基准佣金率 {result['base_commission_rate']:.5%}，"
+                f"基准收入 {_format_amount(result['base_revenue'])}。"
+            ),
+            "What-if 需要先锁定本地计算出的基准指标。",
+            0.9,
+        ),
+        AgentStep(
+            2,
+            "按用户输入执行情景模拟。",
+            "simulate_brokerage_recovery",
+            {
+                "period": period,
+                "trade_volume_change_pct": trade_pct,
+                "commission_rate_change_bp": rate_bp,
+                "expense_change_pct": expense_pct,
+            },
+            result["explanation"],
+            "收入和利润影响由代码计算，避免由模型直接估算金额。",
+            0.92,
+        ),
+    ]
+    final = (
+        f"核心结论：在 {period}，若经纪业务交易量变化 {trade_pct:.1%}、佣金率变化 {rate_bp:.2f}bp、"
+        f"费用变化 {expense_pct:.1%}，收入影响为 {_format_amount(result['revenue_impact'])}，"
+        f"利润影响为 {_format_amount(result['profit_impact'])}。关键数字：模拟收入 {_format_amount(result['simulated_revenue'])}，"
+        f"模拟费用 {_format_amount(result['simulated_expense'])}。建议动作：将交易量恢复假设与低佣客户重定价联动评估。"
+        f"风险提示：该情景未考虑市场波动、客户流失和产品结构变化。"
+    )
+    return AgentResult(user_task, plan, steps, final, None, ["What-if 情景模拟瀑布图"])
 
 
 def run_management_accounting_agent(user_task: str, period: str | None = None, use_llm: bool | None = None) -> AgentResult:
@@ -385,7 +547,11 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
             llm_error = f"LLM 计划生成失败，已使用 Mock 计划：{exc}"
 
     intent = _task_type_from_intent(str(task_context.get("intent") or "profit_variance"))
-    if intent == "BRANCH_MARGIN":
+    if intent == "WHAT_IF":
+        result = _run_what_if(selected_period, user_task, plan)
+    elif intent == "HIGH_REVENUE_LOW_PROFIT":
+        result = _run_high_revenue_low_profit(selected_period, user_task, plan, task_context.get("branch_name"))
+    elif intent == "BRANCH_MARGIN":
         result = _run_branch_margin(selected_period, user_task, plan, task_context.get("branch_name"))
     elif intent == "BROKERAGE_PVM":
         result = _run_brokerage_pvm(selected_period, user_task, plan)
@@ -468,7 +634,9 @@ def answer_management_followup(question: str, context: AgentResult, use_llm: boo
             return "管理建议：" + "；".join(recommendations)
         return "建议继续按业务线、营业部和客户分层下钻收入、直接成本和分摊费用。"
     if "恢复" in question and "5%" in question:
-        pvm = run_pvm_analysis(period, scope="BROKERAGE").iloc[0]
-        impact = float(pvm["actual_trade_volume"]) * 0.05 * float(pvm["actual_commission_rate"])
-        return f"按当前实际平均佣金率粗略估算，交易量恢复 5% 将增加经纪收入约 {_format_amount(impact)}。"
+        result = simulate_brokerage_recovery(period, trade_volume_change_pct=0.05)
+        return (
+            f"按本地 What-if 函数测算，交易量恢复 5% 将增加经纪收入约 {_format_amount(result['revenue_impact'])}，"
+            f"利润改善约 {_format_amount(result['profit_impact'])}。公式为：模拟交易量 × 模拟佣金率 - 基准收入。"
+        )
     return f"当前上下文可回答 PVM 影响、业务线差异、营业部利润率和管理建议。已观察到：{combined_observation[:180]}..."
