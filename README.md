@@ -51,7 +51,22 @@ python3.11 -m venv .venv
 3. 打开“经纪业务预实差异归因”，使用期间、营业部、客户分层和产品类型筛选 PVM 明细。
 4. 查看 PVM 瀑布图和 Top negative variance 明细，定位交易量、佣金率和混合影响。
 5. 进入“营业部盈利能力排名”，识别收入高但经营利润率偏低的营业部。
-6. 在“自动生成 CFO 月度经营分析报告”中导出 Markdown 报告到 `data/output/`。
+6. 进入“Agent 工作台”，输入自然语言任务，查看分析计划、工具调用轨迹、观察结果和追问回答。
+7. 在“自动生成 CFO 月度经营分析报告”中导出 Markdown 报告到 `data/output/`。
+
+## Agent 工作台
+
+`src/agent.py` 提供 deterministic mock Agent 层，不强制依赖外部 LLM。它会根据自然语言任务识别期间和任务类型，真实调用现有函数：
+
+- `calculate_bizline_profitability`
+- `run_brokerage_budget_variance`
+- `run_pvm_analysis`
+- `calculate_branch_profitability`
+- `detect_management_insights`
+- `generate_cfo_report_mock`
+- `export_cfo_report`
+
+Streamlit 的“Agent 工作台”会展示用户任务、自动分析计划、工具调用轨迹、每一步观察结果、最终经营结论、关联图表和追问回答。第一版支持公司利润差异、经纪业务 PVM 归因、营业部收入高但利润率低三类任务。
 
 ## 数据质量检查
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.agent import answer_management_followup, run_management_accounting_agent
 from src.db import load_synthetic_data_to_duckdb
 from src.validation import (
     calculate_bizline_profitability,
@@ -28,7 +30,7 @@ st.title("证券公司管理会计多维经营分析 Agent")
 
 load_synthetic_data_to_duckdb()
 period = st.sidebar.selectbox("分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=8)
-page = st.sidebar.radio("功能", ["CFO 首页看板", "业务线利润贡献分析", "经纪业务预实差异归因", "营业部盈利能力排名", "多维下钻筛选器", "自动生成 CFO 月度经营分析报告"])
+page = st.sidebar.radio("功能", ["CFO 首页看板", "业务线利润贡献分析", "经纪业务预实差异归因", "营业部盈利能力排名", "多维下钻筛选器", "自动生成 CFO 月度经营分析报告", "Agent 工作台"])
 
 biz = calculate_bizline_profitability(period)
 branch = calculate_branch_profitability(period)
@@ -64,6 +66,15 @@ def _amount_view(df: pd.DataFrame) -> pd.DataFrame:
         out[col] = out[col].astype(float) / 10000
         rename[col] = f"{col}（万元）"
     return out.rename(columns=rename)
+
+
+def _agent_steps_view(result) -> pd.DataFrame:
+    rows = []
+    for step in result.steps:
+        row = asdict(step)
+        row["tool_input"] = str(row["tool_input"])
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _recommended_demo_path() -> None:
@@ -179,9 +190,50 @@ elif page == "多维下钻筛选器":
     st.caption("利润贡献率用于判断各业务线在分摊后利润池中的相对贡献。")
     st.dataframe(_amount_view(branch[branch["branch_id"].isin(selected_branch)]), width="stretch")
 
-else:
+elif page == "自动生成 CFO 月度经营分析报告":
     report = generate_cfo_report_mock(period)
     st.markdown(report)
     if st.button("导出 Markdown CFO 报告"):
         output_path = export_cfo_report(period)
         st.success(f"已导出：{output_path}")
+
+else:
+    st.subheader("Agent 工作台")
+    st.caption("输入自然语言任务，Agent 会自动生成分析计划、调用管理会计分析工具，并展示观察结果和最终经营结论。")
+    default_task = f"请分析 {period} 公司利润低于预算的主要原因。"
+    user_task = st.text_area("自然语言任务", value=default_task, height=100)
+    agent_period = st.selectbox("Agent 分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=int(period[-2:]) - 1)
+
+    if st.button("运行 Agent"):
+        st.session_state["management_agent_result"] = run_management_accounting_agent(user_task, agent_period)
+
+    result = st.session_state.get("management_agent_result")
+    if result:
+        st.subheader("Agent 分析计划")
+        for idx, item in enumerate(result.plan, start=1):
+            st.markdown(f"{idx}. {item}")
+
+        st.subheader("工具调用轨迹")
+        st.dataframe(_agent_steps_view(result), width="stretch")
+
+        st.subheader("每一步观察结果")
+        for step in result.steps:
+            with st.expander(f"步骤 {step.step_no}：{step.tool_name}"):
+                st.markdown(f"**规划意图：** {step.thought}")
+                st.json(step.tool_input)
+                st.write(step.observation)
+
+        with st.container(border=True):
+            st.subheader("最终经营结论")
+            st.write(result.final_answer)
+            if result.report_path:
+                st.caption(f"报告路径：{result.report_path}")
+
+        if result.chart_refs:
+            st.subheader("关联图表")
+            for chart in result.chart_refs:
+                st.markdown(f"- {chart}")
+
+        followup = st.text_input("追问", placeholder="例如：交易量影响和佣金率影响哪个更大？有什么管理建议？")
+        if followup:
+            st.write(answer_management_followup(followup, result))
