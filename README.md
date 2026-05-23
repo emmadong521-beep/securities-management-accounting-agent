@@ -1,21 +1,34 @@
 # Securities Management Accounting Agent
 
-> 面向证券公司 CFO 月度经营分析的管理会计 Agent，自动完成“业务线利润贡献 -> 经纪业务 PVM -> 营业部盈利穿透 -> What-if 模拟 -> 经营报告生成”的分析链路。
+> 面向证券公司 CFO 月度经营分析的管理会计 Agent，自动完成
+> “业务线利润贡献 -> 经纪业务 PVM -> 营业部盈利穿透 -> What-if 模拟 -> 经营报告生成”
+> 的分析链路。
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-[![CI](https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml)
+[![CI][ci-badge]][ci-workflow]
 ![Tests](https://img.shields.io/badge/tests-31%20passed-brightgreen)
 ![Data Quality](https://img.shields.io/badge/data%20quality-PASS-brightgreen)
 ![Streamlit](https://img.shields.io/badge/streamlit-demo%20ready-ff4b4b)
+
+[ci-badge]: https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml/badge.svg
+[ci-workflow]: https://github.com/emmadong521-beep/securities-management-accounting-agent/actions/workflows/tests.yml
 
 <!-- After deploying to Streamlit Community Cloud, replace the URL below. -->
 <!-- [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app-name.streamlit.app) -->
 
 ## Demo
 
-Demo GIF placeholder: add `docs/assets/demo.gif` after recording a 30-60 second walkthrough.
+Demo GIF placeholder: add `docs/assets/demo.gif` after recording a 30-60 second
+walkthrough.
 
-Recommended screenshots are documented in [`docs/assets/README.md`](docs/assets/README.md): CFO dashboard, PVM waterfall, branch profitability drilldown, What-if simulation, and Agent workbench.
+Recommended screenshots are documented in
+[`docs/assets/README.md`](docs/assets/README.md):
+
+- CFO dashboard
+- PVM waterfall
+- Branch profitability drilldown
+- What-if simulation
+- Agent workbench
 
 ## Key Metrics
 
@@ -43,15 +56,27 @@ python -m src.project_metrics
 
 ## Quick Demo Path
 
-1. Start Streamlit and open “CFO 首页看板” to review revenue, operating profit, brokerage variance, and insight count.
-2. Open “业务线利润贡献分析” to compare revenue scale and allocated-profit contribution in 万元.
-3. Open “经纪业务预实差异归因” to inspect PVM detail by period, branch, customer segment, and product type.
-4. Review the PVM waterfall and Top negative variance table to separate volume, commission-rate, and mix effects.
-5. Open “营业部盈利穿透分析” to identify high-revenue low-profit branches and cost structure drivers.
-6. Open “What-if 情景模拟” to estimate brokerage revenue and profit impact from volume, commission-rate, and expense changes.
-7. Open “Agent 工作台”; enter a natural-language task and review the plan, tool calls, observations, final answer, and follow-up response.
+1. Start Streamlit and open “CFO 首页看板” to review revenue, operating profit,
+   brokerage variance, and insight count.
+2. Open “业务线利润贡献分析” to compare revenue scale and allocated-profit
+   contribution in 万元.
+3. Open “经纪业务预实差异归因” to inspect PVM detail by period, branch,
+   customer segment, and product type.
+4. Review the PVM waterfall and Top negative variance table to separate volume,
+   commission-rate, and mix effects.
+5. Open “营业部盈利穿透分析” to identify high-revenue low-profit branches and
+   cost structure drivers.
+6. Open “What-if 情景模拟” to estimate brokerage revenue and profit impact from
+   volume, commission-rate, and expense changes.
+7. Open “Agent 工作台”; enter a natural-language task and review the plan,
+   tool calls, observations, final answer, and follow-up response.
 
-Jump to: [Architecture](#architecture) | [Run Locally](#run-locally) | [Engineering Quality](#engineering-quality) | [Agent Workbench](#agent-workbench) | [Data Quality](#data-quality)
+Jump to:
+[Architecture](#architecture) |
+[Run Locally](#run-locally) |
+[Engineering Quality](#engineering-quality) |
+[Agent Workbench](#agent-workbench) |
+[Data Quality](#data-quality)
 
 ## Architecture
 
@@ -101,7 +126,10 @@ This PoC simulates management accounting analysis for a securities company acros
 - What-if simulation for brokerage volume, commission-rate, and expense assumptions.
 - CFO-style monthly operating report generation.
 
-All detailed budget, actual, branch, customer-segment, product, KPI, and insight data is synthetic. Public audit-report figures are used only for aggregate-scale calibration. The project does not contain non-public information, customer privacy data, or commercial secrets, and it is not investment advice.
+All detailed budget, actual, branch, customer-segment, product, KPI, and insight
+data is synthetic. Public audit-report figures are used only for aggregate-scale
+calibration. The project does not contain non-public information, customer
+privacy data, or commercial secrets, and it is not investment advice.
 
 ## Run Locally
 
@@ -124,12 +152,14 @@ One-command local launch:
 
 CI workflow: [`.github/workflows/tests.yml`](.github/workflows/tests.yml)
 
-The GitHub Actions workflow runs on `push` and `pull_request` with Python 3.11 and `LLM_ENABLED=false`. It performs:
+The GitHub Actions workflow runs on `push` and `pull_request` with Python 3.11
+and `LLM_ENABLED=false`. It performs:
 
 - dependency installation with `pip install -e ".[dev]"`
 - synthetic data generation and DuckDB initialization
 - `python -m pytest -q`
-- `python -m pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=html`
+- `python -m pytest --cov=src --cov-report=term-missing --cov-report=xml
+  --cov-report=html`
 - `python -m src.data_quality`
 - upload of `htmlcov` and `coverage.xml` as artifacts
 
@@ -151,7 +181,9 @@ Engineering docs:
 
 ## Agent Workbench
 
-`src/agent.py` supports deterministic mock mode and optional Volcengine Ark LLM enhancement. The Agent never delegates amount calculation, PVM, profitability, or What-if math to the model. It calls local tools and records each step:
+`src/agent.py` supports deterministic mock mode and optional Volcengine Ark LLM
+enhancement. The Agent never delegates amount calculation, PVM, profitability,
+or What-if math to the model. It calls local tools and records each step:
 
 - `calculate_bizline_profitability`
 - `run_brokerage_budget_variance`
@@ -163,7 +195,9 @@ Engineering docs:
 - `detect_management_insights`
 - `generate_cfo_report_mock`
 
-The Streamlit Agent workbench displays the user task, generated plan, tool-call trace, observations, final business conclusion, chart references, and follow-up responses.
+The Streamlit Agent workbench displays the user task, generated plan, tool-call
+trace, observations, final business conclusion, chart references, and follow-up
+responses.
 
 ## Optional Validated Data From Project One
 
@@ -174,11 +208,16 @@ RECON_PROJECT_OUTPUT_DIR=/path/to/securities-month-end-recon-agent/data/output
 USE_RECON_VALIDATED_DATA=false
 ```
 
-When `USE_RECON_VALIDATED_DATA=true` and the configured directory contains `validated_actual_revenue.csv` and `validated_allocated_expense.csv`, the app shows project-one validated data as the active source. If files are missing, it automatically falls back to project-two synthetic data.
+When `USE_RECON_VALIDATED_DATA=true` and the configured directory contains
+`validated_actual_revenue.csv` and `validated_allocated_expense.csv`, the app
+shows project-one validated data as the active source. If files are missing, it
+automatically falls back to project-two synthetic data.
 
 ## High-Revenue Low-Profit Analysis
 
-`src/profitability_insights.py` calculates revenue rank, operating-margin rank, allocated-expense ratio, customer mix, average commission rate, and trade volume. Reason tags include:
+`src/profitability_insights.py` calculates revenue rank, operating-margin rank,
+allocated-expense ratio, customer mix, average commission rate, and trade
+volume. Reason tags include:
 
 - `HIGH_SYSTEM_COST`
 - `LOW_COMMISSION_RATE`
@@ -206,7 +245,9 @@ simulate_brokerage_recovery(
 )
 ```
 
-The function returns base and simulated trade volume, commission rate, revenue, expense, revenue impact, and profit impact. All calculations are local code outputs.
+The function returns base and simulated trade volume, commission rate, revenue,
+expense, revenue impact, and profit impact. All calculations are local code
+outputs.
 
 ## Volcengine Ark LLM Integration
 
@@ -233,7 +274,9 @@ Notes:
 - `ARK_MODEL` should be replaced with the actual Model ID from the Volcengine Ark console.
 - Do not commit `.env`; it is ignored by `.gitignore`.
 - If the key or model is not configured, the app automatically uses Mock Agent mode.
-- LLM is used for task understanding and natural-language expression only. Profitability, PVM, insights, What-if, and amount calculations remain local code outputs.
+- LLM is used for task understanding and natural-language expression only.
+  Profitability, PVM, insights, What-if, and amount calculations remain local
+  code outputs.
 
 ## Data Quality
 
@@ -246,11 +289,27 @@ Outputs:
 - `data/output/data_quality_report.md`
 - `data/output/data_quality_report.json`
 
-The report covers row counts, primary-key uniqueness, foreign-key integrity, amount null checks, budget-vs-actual dimensional consistency, profitability checks, PVM identity checks, seeded operating story detection, public aggregate calibration, and final `PASS / WARNING / FAIL` status.
+The report covers row counts, primary-key uniqueness, foreign-key integrity,
+amount null checks, budget-vs-actual dimensional consistency, profitability
+checks, PVM identity checks, seeded operating story detection, public aggregate
+calibration, and final `PASS / WARNING / FAIL` status.
 
 ## Core Tables
 
-`chart_of_accounts`, `biz_line_master`, `branch_master`, `customer_segment_master`, `product_master`, `monthly_budget`, `monthly_actual`, `brokerage_kpi`, `branch_expense`, `branch_profitability`, `bizline_profitability`, `pvm_analysis_result`, `management_insight`, `market_benchmark`
+- `chart_of_accounts`
+- `biz_line_master`
+- `branch_master`
+- `customer_segment_master`
+- `product_master`
+- `monthly_budget`
+- `monthly_actual`
+- `brokerage_kpi`
+- `branch_expense`
+- `branch_profitability`
+- `bizline_profitability`
+- `pvm_analysis_result`
+- `management_insight`
+- `market_benchmark`
 
 ## Seeded Demo Stories
 
