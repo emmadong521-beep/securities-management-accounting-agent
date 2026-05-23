@@ -1,16 +1,20 @@
-# Demo Assets
+# Assets
 
-Place recorded walkthrough media and Streamlit screenshots in this directory.
+This directory stores optional visual assets for the project README and
+documentation.
 
-Recommended files:
+## Recommended Files
 
-| File | Purpose |
-|---|---|
-| `demo.gif` | 30-60 second walkthrough covering CFO dashboard, PVM analysis, branch profitability drilldown, What-if simulation, and Agent workbench. |
-| `cfo_dashboard.png` | CFO home dashboard with key operating metrics. |
-| `pvm_waterfall.png` | Brokerage PVM waterfall chart. |
-| `branch_profitability.png` | High-revenue low-profit branch analysis. |
-| `what_if.png` | What-if simulation page. |
-| `agent_workbench.png` | Agent workbench showing task, plan, tool calls, observations, and final business conclusion. |
+- `demo.gif`
+- `cfo_dashboard.png`
+- `pvm_waterfall.png`
+- `branch_profitability.png`
+- `what_if.png`
+- `agent_workbench.png`
 
-Do not commit raw audit reports, local `.env` files, API keys, or private data in this directory.
+## Guidelines
+
+- Use synthetic data only.
+- Do not include API keys, local filesystem paths, or private data.
+- Prefer screenshots that show the Agent plan, tool-call trace, and final
+  conclusion.
