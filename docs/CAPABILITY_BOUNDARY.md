@@ -22,3 +22,10 @@ This project focuses on management accounting analysis for securities companies:
 - Optional use of project-one validated outputs.
 - No real planning system integration.
 - LLM enhances explanation only.
+
+## Rendering Notes
+
+- The capability comparison is intentionally maintained as a standard Markdown
+  table.
+- The header, separator, and each comparison row are stored on independent
+  lines for reliable GitHub rendering.
