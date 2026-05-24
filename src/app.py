@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.agent import answer_management_followup, run_management_accounting_agent, run_management_accounting_agent_with_trace
+from src.bcg_matrix import calculate_bcg_matrix, explain_bcg_entity, generate_bcg_summary
 from src.db import load_synthetic_data_to_duckdb
 from src.llm_client import explain_llm_config_status, is_llm_available, load_llm_config
 from src.profitability_insights import (
@@ -60,6 +61,7 @@ page = st.sidebar.radio(
         "经纪业务预实差异归因",
         "营业部盈利能力排名",
         "营业部盈利穿透分析",
+        "管理会计 BCG 矩阵",
         "What-if 情景模拟",
         "多维下钻筛选器",
         "自动生成 CFO 月度经营分析报告",
@@ -97,6 +99,21 @@ AMOUNT_COLUMNS = {
     "simulated_revenue",
     "base_expense",
     "simulated_expense",
+    "previous_revenue",
+    "budget_revenue",
+    "size_value",
+}
+
+PERCENT_COLUMNS = {
+    "revenue_growth_pct",
+    "budget_variance_rate",
+    "operating_margin",
+    "profit_contribution_rate",
+    "allocated_expense_ratio",
+    "x_value",
+    "y_value",
+    "growth_threshold",
+    "margin_threshold",
 }
 
 
@@ -106,6 +123,8 @@ def _amount_view(df: pd.DataFrame) -> pd.DataFrame:
     for col in AMOUNT_COLUMNS.intersection(out.columns):
         out[col] = out[col].astype(float) / 10000
         rename[col] = f"{col}（万元）"
+    for col in PERCENT_COLUMNS.intersection(out.columns):
+        out[col] = out[col].astype(float).map(lambda value: f"{value:.2%}")
     return out.rename(columns=rename)
 
 
@@ -240,9 +259,10 @@ def build_agent_related_chart_flags(result) -> dict:
     show_pvm = any(keyword in chinese_text for keyword in ["pvm", "经纪", "交易量影响", "佣金率影响", "预算 vs 实际"])
     show_bizline = any(keyword in chinese_text for keyword in ["业务线", "利润低于预算", "利润贡献", "公司利润", "经营利润"])
     show_branch_scatter = any(keyword in chinese_text for keyword in ["营业部", "利润率", "branch", "收入 vs 经营利润率"])
+    show_bcg = any(keyword in chinese_text for keyword in ["bcg", "经营组合", "现金牛", "增长明星", "潜力观察", "低效待优化", "矩阵"])
     is_profit_variance = any(keyword in chinese_text for keyword in ["利润低于预算", "公司利润", "主要原因"])
 
-    if not refs and not any([show_what_if, show_high_low, show_pvm, show_bizline, show_branch_scatter]):
+    if not refs and not any([show_what_if, show_high_low, show_pvm, show_bizline, show_branch_scatter, show_bcg]):
         show_bizline = True
         show_pvm = True
         show_branch_scatter = True
@@ -267,6 +287,7 @@ def build_agent_related_chart_flags(result) -> dict:
         "show_branch_scatter": show_branch_scatter,
         "show_high_low": show_high_low,
         "show_what_if": show_what_if,
+        "show_bcg": show_bcg,
     }
 
 
@@ -291,6 +312,41 @@ def _render_agent_related_charts(result, period: str) -> None:
                 render_info_card("业务解读", "该图展示各业务线在费用分摊后的经营利润贡献，用于定位主要利润来源。", icon="📌")
         except Exception as exc:
             st.warning(f"业务线利润贡献图渲染失败：{exc}")
+
+    if flags.get("show_bcg"):
+        try:
+            entity_type = "branch" if "营业部" in str(getattr(result, "user_task", "")) else "biz_line"
+            matrix = calculate_bcg_matrix(period, entity_type=entity_type)
+            render_section_title("管理会计 BCG-style 经营组合矩阵", "🧭")
+            if matrix.empty:
+                st.info("当前期间无相关数据")
+            else:
+                plot_df = matrix.copy()
+                plot_df["收入（万元）"] = plot_df["revenue"] / 10000
+                fig = px.scatter(
+                    plot_df,
+                    x="x_value",
+                    y="y_value",
+                    size="size_value",
+                    color="quadrant",
+                    hover_name="entity_name",
+                    title="管理会计 BCG-style 经营组合矩阵",
+                    color_discrete_map={
+                        "增长明星": "#16A34A",
+                        "现金牛": "#2563EB",
+                        "潜力观察": "#F59E0B",
+                        "低效待优化": "#DC2626",
+                    },
+                )
+                fig.add_vline(x=float(matrix["margin_threshold"].iloc[0]), line_dash="dash", line_color="#64748B")
+                fig.add_hline(y=float(matrix["growth_threshold"].iloc[0]), line_dash="dash", line_color="#64748B")
+                fig.update_xaxes(title="盈利质量")
+                fig.update_yaxes(title="增长性")
+                st.plotly_chart(fig, width="stretch")
+                st.dataframe(_amount_view(matrix[["entity_name", "quadrant", "revenue", "revenue_growth_pct", "operating_margin", "recommended_action"]]), width="stretch")
+                render_info_card("业务解读", "该矩阵用内部盈利质量和增长性指标识别业务线或营业部经营组合状态。", icon="📌")
+        except Exception as exc:
+            st.warning(f"经营组合矩阵渲染失败：{exc}")
 
     if flags["show_pvm"]:
         try:
@@ -560,6 +616,96 @@ elif page == "营业部盈利穿透分析":
         pie = px.pie(expense_df, names="费用类型", values="金额（万元）", title="费用分摊结构（万元）")
         st.plotly_chart(pie, width="stretch")
         st.caption("费用结构图用于判断低利润率来自系统、行情、总部、营销还是基础运营成本。")
+
+elif page == "管理会计 BCG 矩阵":
+    render_section_title("管理会计 BCG-style 经营组合矩阵", "🧭")
+    f1, f2, f3 = st.columns(3)
+    entity_type_label = f1.selectbox("分析对象", ["业务线", "营业部"])
+    entity_type = "biz_line" if entity_type_label == "业务线" else "branch"
+    x_metric = f2.selectbox("盈利质量指标", ["operating_margin", "profit_contribution_rate"])
+    y_metric = f3.selectbox("增长性指标", ["revenue_growth_pct", "budget_variance_rate"])
+    bcg_df = calculate_bcg_matrix(period, entity_type=entity_type, x_metric=x_metric, y_metric=y_metric)
+    bcg_summary = generate_bcg_summary(period, entity_type=entity_type)
+
+    if bcg_df.empty:
+        st.warning("当前期间无可用 BCG 矩阵数据")
+    else:
+        quadrant_counts = bcg_summary["quadrant_counts"]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            render_kpi_card("增长明星数量", str(quadrant_counts.get("增长明星", 0)), status="PASS")
+        with c2:
+            render_kpi_card("现金牛数量", str(quadrant_counts.get("现金牛", 0)), status="PASS")
+        with c3:
+            render_kpi_card("潜力观察数量", str(quadrant_counts.get("潜力观察", 0)), status="MEDIUM")
+        with c4:
+            render_kpi_card("低效待优化数量", str(quadrant_counts.get("低效待优化", 0)), status="HIGH")
+
+        color_map = {
+            "增长明星": "#16A34A",
+            "现金牛": "#2563EB",
+            "潜力观察": "#F59E0B",
+            "低效待优化": "#DC2626",
+        }
+        plot_df = bcg_df.copy()
+        plot_df["收入（万元）"] = plot_df["revenue"] / 10000
+        plot_df["经营利润（万元）"] = plot_df["operating_profit"] / 10000
+        fig = px.scatter(
+            plot_df,
+            x="x_value",
+            y="y_value",
+            size="size_value",
+            color="quadrant",
+            color_discrete_map=color_map,
+            hover_name="entity_name",
+            hover_data={
+                "entity_name": True,
+                "收入（万元）": ":,.2f",
+                "经营利润（万元）": ":,.2f",
+                "operating_margin": ":.2%",
+                "revenue_growth_pct": ":.2%",
+                "budget_variance_rate": ":.2%",
+                "quadrant": True,
+                "recommended_action": True,
+                "x_value": ":.2%",
+                "y_value": ":.2%",
+                "size_value": False,
+            },
+            title="管理会计 BCG-style 经营组合矩阵",
+        )
+        margin_threshold = float(bcg_df["margin_threshold"].iloc[0])
+        growth_threshold = float(bcg_df["growth_threshold"].iloc[0])
+        fig.add_vline(x=margin_threshold, line_dash="dash", line_color="#64748B")
+        fig.add_hline(y=growth_threshold, line_dash="dash", line_color="#64748B")
+        fig.update_xaxes(title="盈利质量")
+        fig.update_yaxes(title="增长性")
+        st.plotly_chart(fig, width="stretch")
+        render_info_card(
+            "矩阵说明",
+            "本矩阵为内部管理会计改造版，不使用外部市场份额，而使用经营利润率、收入增长、预算偏差等内部指标。",
+            icon="📌",
+        )
+
+        render_section_title("象限结果表", "📋")
+        table_cols = [
+            "entity_name",
+            "quadrant",
+            "revenue",
+            "revenue_growth_pct",
+            "operating_margin",
+            "profit_contribution_rate",
+            "allocated_expense_ratio",
+            "recommended_action",
+        ]
+        st.dataframe(_amount_view(bcg_df[table_cols]), width="stretch")
+
+        selected_entity = st.selectbox("选择对象查看解释", bcg_df["entity_name"].tolist())
+        selected_row = bcg_df[bcg_df["entity_name"] == selected_entity].iloc[0]
+        explanation = explain_bcg_entity(selected_row)
+        render_info_card("所属象限", f"{explanation['entity_name']}：{explanation['quadrant']}", icon="🧭")
+        render_info_card("原因解释", explanation["reason"], icon="🔎")
+        render_info_card("建议动作", explanation["recommended_action"], icon="✅", border_color="#059669")
+        render_info_card("风险提示", explanation["risk_note"], icon="⚠️", border_color="#F59E0B")
 
 elif page == "What-if 情景模拟":
     render_section_title("What-if 情景模拟", "🧪")

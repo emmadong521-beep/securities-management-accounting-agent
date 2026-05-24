@@ -202,6 +202,28 @@ All detailed budget, actual, branch, customer-segment, product, KPI, and insight
 
 ---
 
+## Management Accounting BCG-style Matrix
+
+This project adapts the classic BCG growth-share idea into an internal management accounting operating mix matrix.
+
+Traditional BCG uses market growth and relative market share.
+This PoC uses internal management accounting metrics instead:
+
+- X-axis: operating margin or profit contribution
+- Y-axis: revenue growth or budget variance
+- Bubble size: revenue scale
+
+The goal is to classify business lines or branches into:
+
+- 增长明星
+- 现金牛
+- 潜力观察
+- 低效待优化
+
+This is not an external market-share matrix. It is a management accounting adaptation for internal resource allocation and operating review.
+
+---
+
 ## Quick Demo Path
 
 1. Start Streamlit: `PORT=8502 ./scripts/run_demo.sh`.

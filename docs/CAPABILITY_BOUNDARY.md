@@ -79,6 +79,13 @@ It can also optionally read validated outputs from the month-end reconciliation 
 
 This design demonstrates how trusted month-end data can become the input layer for management accounting analysis.
 
+## BCG-style Matrix Boundary
+
+- This is not a strict external market-share BCG matrix.
+- It does not use external market share or industry growth data.
+- It uses internal management accounting metrics such as operating margin, revenue growth, budget variance, and revenue scale.
+- It is intended for internal operating mix review, not external market strategy evaluation.
+
 ## Current Limitations
 
 - Local PoC only.

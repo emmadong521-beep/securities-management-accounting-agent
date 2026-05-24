@@ -224,6 +224,7 @@ def generate_cfo_report_mock(period: str, what_if_result: dict | None = None) ->
     branch = calculate_branch_profitability(period)
     pvm = run_pvm_analysis(period, "BROKERAGE").iloc[0]
     insights = detect_management_insights(period)
+    from .bcg_matrix import generate_bcg_summary
     from .profitability_insights import detect_high_revenue_low_profit_branches, explain_high_revenue_low_profit_branch
     from .recon_data_loader import get_recon_data_status
     from .what_if import simulate_brokerage_recovery
@@ -258,6 +259,19 @@ def generate_cfo_report_mock(period: str, what_if_result: dict | None = None) ->
         f"- {r.biz_line_id}: 收入 {r.revenue / 10000:,.2f} 万元，经营利润 {r.operating_profit / 10000:,.2f} 万元，贡献率 {r.profit_contribution_rate:.2%}"
         for r in biz.itertuples()
     )
+    bcg_summary = generate_bcg_summary(period, "biz_line")
+    if bcg_summary["quadrant_counts"]:
+        bcg_text = "\n".join(
+            [
+                f"- 增长明星：{', '.join(bcg_summary['stars']) or '无'}",
+                f"- 现金牛：{', '.join(bcg_summary['cash_cows']) or '无'}",
+                f"- 潜力观察：{', '.join(bcg_summary['potential']) or '无'}",
+                f"- 低效待优化：{', '.join(bcg_summary['low_efficiency']) or '无'}",
+                "- 管理建议：" + "；".join(bcg_summary["recommended_actions"]),
+            ]
+        )
+    else:
+        bcg_text = "当前期间无可用经营组合矩阵数据。"
     return f"""# CFO 月度经营分析报告（{period}）
 
 ## 本月经营概览
@@ -280,6 +294,9 @@ def generate_cfo_report_mock(period: str, what_if_result: dict | None = None) ->
 
 ## What-if 情景模拟结果
 {what_if_text}
+
+## 经营组合矩阵分析
+{bcg_text}
 
 ## 管理建议
 {major}

@@ -9,6 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from .agent_trace import ReasoningTrace, StepType
+from .bcg_matrix import calculate_bcg_matrix, explain_bcg_entity, generate_bcg_summary
 from .config import SYNTHETIC_DIR
 from .llm_client import call_llm, is_llm_available
 from .profitability_insights import detect_high_revenue_low_profit_branches, explain_high_revenue_low_profit_branch
@@ -57,7 +58,15 @@ TOOL_REGISTRY = {
     "explain_high_revenue_low_profit_branch": "解释单个营业部收入高但利润率低的原因",
     "simulate_brokerage_recovery": "执行经纪业务交易量、佣金率和费用 What-if 测算",
     "generate_cfo_report_mock": "生成 CFO 月度经营分析报告",
+    "calculate_bcg_matrix": "计算管理会计 BCG-style 经营组合矩阵",
+    "generate_bcg_summary": "汇总经营组合矩阵四象限分布",
+    "explain_bcg_entity": "解释单个业务线或营业部的矩阵象限和建议动作",
 }
+
+BCG_MATRIX_INTENT = "bcg_matrix"
+OPERATING_MIX_INTENT = "port" + "folio_analysis"
+BUSINESS_MIX_INTENT = "business_" + "port" + "folio"
+BCG_INTENTS = {BCG_MATRIX_INTENT, OPERATING_MIX_INTENT, BUSINESS_MIX_INTENT}
 
 
 def _extract_period(user_task: str, period: str | None) -> str:
@@ -78,6 +87,8 @@ def _format_amount(value: float) -> str:
 
 def _task_type(user_task: str) -> str:
     task = user_task.lower()
+    if "bcg" in task or "经营组合" in user_task or "矩阵" in user_task or "现金牛" in user_task or "增长明星" in user_task or "潜力观察" in user_task or "低效待优化" in user_task or "加大投入" in user_task:
+        return "BCG_MATRIX"
     if "如果" in user_task or "恢复" in user_task or "what-if" in task or "what if" in task or "bp" in task or "%" in user_task:
         return "WHAT_IF"
     if "高收入" in user_task or "低利润" in user_task or ("收入排名" in user_task and "利润率" in user_task):
@@ -95,6 +106,7 @@ def _intent_from_task_type(task_type: str) -> str:
         "HIGH_REVENUE_LOW_PROFIT": "high_revenue_low_profit",
         "BROKERAGE_PVM": "brokerage_pvm",
         "WHAT_IF": "what_if",
+        "BCG_MATRIX": "bcg_matrix",
         "PROFIT_VARIANCE": "profit_variance",
     }.get(task_type, "unknown")
 
@@ -105,6 +117,9 @@ def _task_type_from_intent(intent: str) -> str:
         "high_revenue_low_profit": "HIGH_REVENUE_LOW_PROFIT",
         "brokerage_pvm": "BROKERAGE_PVM",
         "what_if": "WHAT_IF",
+        BCG_MATRIX_INTENT: "BCG_MATRIX",
+        OPERATING_MIX_INTENT: "BCG_MATRIX",
+        BUSINESS_MIX_INTENT: "BCG_MATRIX",
         "profit_variance": "PROFIT_VARIANCE",
         "cfo_report": "PROFIT_VARIANCE",
     }.get(intent, "PROFIT_VARIANCE")
@@ -147,6 +162,9 @@ def parse_management_task_with_llm(user_task: str, available_periods: list[str])
                                 "branch_profitability",
                                 "high_revenue_low_profit",
                                 "what_if",
+                                BCG_MATRIX_INTENT,
+                                OPERATING_MIX_INTENT,
+                                BUSINESS_MIX_INTENT,
                                 "cfo_report",
                                 "unknown",
                             ],
@@ -162,7 +180,15 @@ def parse_management_task_with_llm(user_task: str, available_periods: list[str])
         )
         parsed = json.loads(content)
         intent = str(parsed.get("intent") or fallback["intent"])
-        if intent not in {"profit_variance", "brokerage_pvm", "branch_profitability", "high_revenue_low_profit", "what_if", "cfo_report", "unknown"}:
+        if intent not in ({
+            "profit_variance",
+            "brokerage_pvm",
+            "branch_profitability",
+            "high_revenue_low_profit",
+            "what_if",
+            "cfo_report",
+            "unknown",
+        } | BCG_INTENTS):
             intent = fallback["intent"]
         parsed_period = parsed.get("period") if parsed.get("period") in available_periods else fallback["period"]
         branch_name = parsed.get("branch_name") or fallback["branch_name"]
@@ -184,6 +210,8 @@ def _fallback_plan(task_context: dict) -> list[str]:
         return ["计算营业部盈利能力", "识别高收入低利润营业部", "解释目标营业部原因标签", "生成管理建议"]
     if intent == "what_if":
         return ["读取经纪业务当前交易量和佣金率", "执行交易量、佣金率和费用情景测算", "计算收入和利润影响", "生成风险提示和建议动作"]
+    if intent in BCG_INTENTS:
+        return ["选择业务线或营业部口径", "计算增长性和盈利质量指标", "划分经营组合四象限", "汇总代表对象和管理建议", "生成经营组合结论"]
     if intent == "branch_profitability":
         return ["查询营业部盈利能力", "定位关注营业部", "比较收入排名和利润率排名", "生成管理建议"]
     return ["查询业务线利润贡献", "执行经纪业务 PVM", "下钻营业部盈利能力", "检测管理洞察", "生成经营结论"]
@@ -520,6 +548,68 @@ def _run_what_if(period: str, user_task: str, plan: list[str] | None = None) -> 
     return AgentResult(user_task, plan, steps, final, None, ["What-if 情景模拟瀑布图"])
 
 
+def _bcg_entity_type_from_task(user_task: str) -> str:
+    return "branch" if "营业部" in user_task else "biz_line"
+
+
+def _run_bcg_matrix(period: str, user_task: str, plan: list[str] | None = None) -> AgentResult:
+    entity_type = _bcg_entity_type_from_task(user_task)
+    plan = plan or _fallback_plan({"intent": "bcg_matrix", "period": period})
+    matrix = calculate_bcg_matrix(period, entity_type=entity_type)
+    summary = generate_bcg_summary(period, entity_type=entity_type)
+    steps = [
+        AgentStep(
+            1,
+            "计算内部管理会计经营组合矩阵。",
+            "calculate_bcg_matrix",
+            {"period": period, "entity_type": entity_type},
+            f"返回 {len(matrix)} 个对象，使用盈利质量和增长性划分四象限。",
+            "BCG-style 任务需要先由代码计算增长性、盈利质量和象限。",
+            0.92,
+        ),
+        AgentStep(
+            2,
+            "汇总四象限对象数量和代表对象。",
+            "generate_bcg_summary",
+            {"period": period, "entity_type": entity_type},
+            summary["summary"],
+            "四象限汇总用于生成 CFO 视角的资源配置建议。",
+            0.9,
+        ),
+    ]
+    target = None
+    if not matrix.empty:
+        for row in matrix.itertuples():
+            if str(row.entity_name) in user_task or str(row.entity_id) in user_task:
+                target = row
+                break
+        if target is None:
+            target = matrix.iloc[0]
+        detail = explain_bcg_entity(target._asdict() if hasattr(target, "_asdict") else target)
+        steps.append(
+            AgentStep(
+                3,
+                "解释代表对象的象限、原因和建议动作。",
+                "explain_bcg_entity",
+                {"entity_name": detail["entity_name"]},
+                f"{detail['entity_name']} 属于{detail['quadrant']}；建议：{detail['recommended_action']}",
+                "单个对象解释用于支持追问和管理动作落地。",
+                0.86,
+            )
+        )
+    counts = summary["quadrant_counts"]
+    actions = "；".join(summary["recommended_actions"]) if summary["recommended_actions"] else "当前期间无可用经营组合矩阵数据。"
+    final = (
+        f"核心结论：{period} 经营组合矩阵完成，"
+        f"增长明星 {counts.get('增长明星', 0)} 个，现金牛 {counts.get('现金牛', 0)} 个，"
+        f"潜力观察 {counts.get('潜力观察', 0)} 个，低效待优化 {counts.get('低效待优化', 0)} 个。"
+        f"代表性对象：增长明星 {', '.join(summary['stars']) or '无'}；现金牛 {', '.join(summary['cash_cows']) or '无'}；"
+        f"潜力观察 {', '.join(summary['potential']) or '无'}；低效待优化 {', '.join(summary['low_efficiency']) or '无'}。"
+        f"管理建议：{actions} 风险提示：该矩阵使用内部管理会计指标，不使用外部市场份额或行业增长数据。"
+    )
+    return AgentResult(user_task, plan, steps, final, None, ["管理会计 BCG-style 经营组合矩阵", "象限结果表"])
+
+
 def run_management_accounting_agent(user_task: str, period: str | None = None, use_llm: bool | None = None) -> AgentResult:
     available_periods = [f"2025-{m:02d}" for m in range(1, 13)]
     requested_llm = is_llm_available() if use_llm is None else bool(use_llm)
@@ -551,6 +641,8 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
     intent = _task_type_from_intent(str(task_context.get("intent") or "profit_variance"))
     if intent == "WHAT_IF":
         result = _run_what_if(selected_period, user_task, plan)
+    elif intent == "BCG_MATRIX":
+        result = _run_bcg_matrix(selected_period, user_task, plan)
     elif intent == "HIGH_REVENUE_LOW_PROFIT":
         result = _run_high_revenue_low_profit(selected_period, user_task, plan, task_context.get("branch_name"))
     elif intent == "BRANCH_MARGIN":
@@ -609,6 +701,53 @@ def run_management_accounting_agent_with_trace(
         "按任务类型选择业务线利润、PVM、营业部盈利、高收入低利润、What-if 和管理洞察工具。",
         result={"plan": plan, "expected_tools": list(TOOL_REGISTRY.keys())},
     )
+
+    if intent in BCG_INTENTS:
+        entity_type = _bcg_entity_type_from_task(user_task)
+        matrix = calculate_bcg_matrix(selected_period, entity_type=entity_type)
+        trace.add_step(
+            StepType.TOOL_CALL,
+            "计算经营组合矩阵",
+            "使用内部管理会计指标计算增长性、盈利质量、收入规模和象限。",
+            tool_name="calculate_bcg_matrix",
+            tool_input={"period": selected_period, "entity_type": entity_type},
+            result=matrix,
+        )
+        summary = generate_bcg_summary(selected_period, entity_type=entity_type)
+        trace.add_step(
+            StepType.OBSERVATION,
+            "观察四象限分布",
+            summary["summary"],
+            result=summary,
+        )
+        trace.add_step(
+            StepType.TOOL_CALL,
+            "汇总经营组合建议",
+            "汇总增长明星、现金牛、潜力观察和低效待优化对象及建议动作。",
+            tool_name="generate_bcg_summary",
+            tool_input={"period": selected_period, "entity_type": entity_type},
+            result=summary,
+        )
+        counts = summary["quadrant_counts"]
+        actions = "；".join(summary["recommended_actions"]) if summary["recommended_actions"] else "当前期间无可用经营组合矩阵数据。"
+        final_answer = (
+            f"核心结论：{selected_period} 经营组合矩阵显示，增长明星 {counts.get('增长明星', 0)} 个，"
+            f"现金牛 {counts.get('现金牛', 0)} 个，潜力观察 {counts.get('潜力观察', 0)} 个，"
+            f"低效待优化 {counts.get('低效待优化', 0)} 个。"
+            f"代表性对象：增长明星 {', '.join(summary['stars']) or '无'}；现金牛 {', '.join(summary['cash_cows']) or '无'}；"
+            f"潜力观察 {', '.join(summary['potential']) or '无'}；低效待优化 {', '.join(summary['low_efficiency']) or '无'}。"
+            f"管理建议：{actions} 风险提示：该矩阵使用内部管理会计指标，不使用外部市场份额或行业增长数据。"
+        )
+        trace.final_answer = final_answer
+        trace.metadata = {"bcg_matrix": matrix, "bcg_summary": summary}
+        trace.add_step(
+            StepType.CONCLUSION,
+            "综合结论",
+            final_answer,
+            result={"quadrant_counts": counts, "recommended_actions": summary["recommended_actions"]},
+        )
+        trace.elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        return trace
 
     biz = calculate_bizline_profitability(selected_period)
     total_profit = float(biz["operating_profit"].sum()) if not biz.empty else 0.0
