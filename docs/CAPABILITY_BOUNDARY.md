@@ -88,3 +88,4 @@ This design demonstrates how trusted month-end data can become the input layer f
 - No production workflow or permission control.
 - LLM enhances task understanding and explanation only.
 - The workflow focuses on selected management accounting scenarios rather than full enterprise performance management.
+- The project exposes tool-call and analysis traces, not raw model reasoning.

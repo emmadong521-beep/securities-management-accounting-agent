@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import re
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
+from .agent_trace import ReasoningTrace, StepType
 from .config import SYNTHETIC_DIR
 from .llm_client import call_llm, is_llm_available
 from .profitability_insights import detect_high_revenue_low_profit_branches, explain_high_revenue_low_profit_branch
@@ -571,6 +573,222 @@ def run_management_accounting_agent(user_task: str, period: str | None = None, u
     result.llm_mode = llm_mode
     result.llm_error = llm_error
     return result
+
+
+def run_management_accounting_agent_with_trace(
+    user_task: str,
+    period: str | None = None,
+) -> ReasoningTrace:
+    started = time.perf_counter()
+    available_periods = [f"2025-{m:02d}" for m in range(1, 13)]
+    task_context = _fallback_task_context(user_task, available_periods, period)
+    selected_period = str(task_context.get("period") or _extract_period(user_task, period))
+    intent = str(task_context.get("intent") or "profit_variance")
+    trade_pct = _parse_pct_from_task(user_task, 0.05)
+    rate_bp = _parse_bp_from_task(user_task)
+    expense_pct = _parse_expense_pct_from_task(user_task)
+    task_context.update(
+        {
+            "trade_volume_change_pct": trade_pct,
+            "commission_rate_change_bp": rate_bp,
+            "expense_change_pct": expense_pct,
+        }
+    )
+    trace = ReasoningTrace(user_task=user_task, intent=intent, period=selected_period)
+    trace.add_step(
+        StepType.INTENT_RECOGNITION,
+        "识别经营分析任务",
+        "解析用户输入中的期间、经营分析意图、营业部和情景模拟参数。",
+        result=task_context,
+    )
+
+    plan = _fallback_plan(task_context)
+    trace.add_step(
+        StepType.PLAN_GENERATION,
+        "制定分析计划",
+        "按任务类型选择业务线利润、PVM、营业部盈利、高收入低利润、What-if 和管理洞察工具。",
+        result={"plan": plan, "expected_tools": list(TOOL_REGISTRY.keys())},
+    )
+
+    biz = calculate_bizline_profitability(selected_period)
+    total_profit = float(biz["operating_profit"].sum()) if not biz.empty else 0.0
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "计算业务线利润贡献",
+        "读取实际收入、直接成本和分摊费用，形成业务线分摊后利润视图。",
+        tool_name="calculate_bizline_profitability",
+        tool_input={"period": selected_period},
+        result=biz,
+    )
+    top_biz = biz.sort_values("operating_profit", ascending=False).iloc[0] if not biz.empty else None
+    trace.add_step(
+        StepType.OBSERVATION,
+        "观察业务线贡献",
+        (
+            f"期间 {selected_period} 分摊后经营利润合计 {_format_amount(total_profit)}，"
+            f"利润贡献最高业务线为 {top_biz['biz_line_id']}。"
+            if top_biz is not None
+            else f"期间 {selected_period} 未返回业务线利润数据。"
+        ),
+        result=biz,
+    )
+
+    pvm = run_pvm_analysis(selected_period, scope="BROKERAGE")
+    pvm_row = pvm.iloc[0]
+    major_effect, major_value = _major_pvm_effect(pvm_row)
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "执行经纪业务 PVM",
+        "把经纪收入差异拆为交易量、佣金率和混合影响。",
+        tool_name="run_pvm_analysis",
+        tool_input={"period": selected_period, "scope": "BROKERAGE"},
+        result=pvm,
+    )
+    trace.add_step(
+        StepType.OBSERVATION,
+        "观察 PVM 量价影响",
+        (
+            f"总差异 {_format_amount(float(pvm_row['total_variance']))}，主要驱动为"
+            f"{major_effect}（{_format_amount(major_value)}）。"
+        ),
+        result=pvm_row.to_dict(),
+    )
+
+    branch = calculate_branch_profitability(selected_period)
+    weak_branch = branch.sort_values("operating_margin").iloc[0] if not branch.empty else None
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "计算营业部盈利能力",
+        "比较营业部收入、分摊费用、经营利润和经营利润率。",
+        tool_name="calculate_branch_profitability",
+        tool_input={"period": selected_period},
+        result=branch,
+    )
+    trace.add_step(
+        StepType.OBSERVATION,
+        "观察营业部盈利排名",
+        (
+            f"利润率最低营业部为 {_branch_label(str(weak_branch['branch_id']))}，"
+            f"经营利润率 {weak_branch['operating_margin']:.2%}。"
+            if weak_branch is not None
+            else "未返回营业部盈利数据。"
+        ),
+        result=weak_branch.to_dict() if weak_branch is not None else {},
+    )
+
+    high_low = detect_high_revenue_low_profit_branches(selected_period)
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "识别高收入低利润营业部",
+        "筛选收入靠前但经营利润率靠后、分摊费用率偏高或佣金率偏低的营业部。",
+        tool_name="detect_high_revenue_low_profit_branches",
+        tool_input={"period": selected_period},
+        result=high_low,
+    )
+    target_branch_id = None
+    high_low_detail = None
+    if not high_low.empty:
+        target_branch_id = str(high_low.iloc[0]["branch_id"])
+        high_low_detail = explain_high_revenue_low_profit_branch(selected_period, target_branch_id)
+    trace.add_step(
+        StepType.ANALYSIS_DECISION,
+        "判断是否需要营业部下钻",
+        (
+            f"识别到 {len(high_low)} 个高收入低利润营业部，"
+            f"优先下钻 {_branch_label(target_branch_id)}。"
+            if target_branch_id
+            else "当前期间未筛出高收入低利润营业部，保留业务线和 PVM 分析结论。"
+        ),
+        tool_name="explain_high_revenue_low_profit_branch" if target_branch_id else None,
+        tool_input={"period": selected_period, "branch_id": target_branch_id} if target_branch_id else {},
+        result=high_low_detail or high_low,
+    )
+
+    scenario = simulate_brokerage_recovery(selected_period, trade_pct, rate_bp, expense_pct)
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "执行 What-if 情景模拟",
+        "根据交易量、佣金率和费用变化参数计算收入和利润影响。",
+        tool_name="simulate_brokerage_recovery",
+        tool_input={
+            "period": selected_period,
+            "trade_volume_change_pct": trade_pct,
+            "commission_rate_change_bp": rate_bp,
+            "expense_change_pct": expense_pct,
+        },
+        result=scenario,
+    )
+    trace.add_step(
+        StepType.OBSERVATION,
+        "观察情景模拟影响",
+        (
+            f"模拟收入影响 {_format_amount(float(scenario['revenue_impact']))}，"
+            f"利润影响 {_format_amount(float(scenario['profit_impact']))}。"
+        ),
+        result=scenario,
+    )
+
+    insights = detect_management_insights(selected_period)
+    trace.add_step(
+        StepType.TOOL_CALL,
+        "检测管理洞察",
+        "汇总预算差异、费用分摊后盈利能力和业务故事规则产生的经营洞察。",
+        tool_name="detect_management_insights",
+        tool_input={"period": selected_period},
+        result=insights,
+    )
+    insight_titles = "；".join(insights["title"].astype(str).tolist()) if not insights.empty else "未识别到重点洞察"
+    trace.add_step(
+        StepType.ANALYSIS_DECISION,
+        "判断主要驱动因素",
+        (
+            f"主要驱动为 {major_effect}；营业部侧关注"
+            f"{_branch_label(str(weak_branch['branch_id'])) if weak_branch is not None else '暂无'}；"
+            f"管理洞察：{insight_titles}。"
+        ),
+        result={
+            "major_pvm_effect": major_effect,
+            "major_pvm_value": major_value,
+            "weak_branch": weak_branch.to_dict() if weak_branch is not None else None,
+            "insight_titles": insight_titles,
+        },
+    )
+
+    final_answer = (
+        f"核心结论：{selected_period} 分摊后经营利润为 {_format_amount(total_profit)}。"
+        f"关键数字：经纪 PVM 总差异 {_format_amount(float(pvm_row['total_variance']))}，"
+        f"主要驱动为{major_effect}（{_format_amount(major_value)}）；"
+        f"What-if 模拟收入影响 {_format_amount(float(scenario['revenue_impact']))}，"
+        f"利润影响 {_format_amount(float(scenario['profit_impact']))}。"
+        f"主要驱动因素：{insight_titles}。建议动作：优先复核经纪交易量、低佣客户结构和费用分摊后低利润网点。"
+        f"风险提示：结论基于合成经营数据和本地规则计算，实际管理动作需结合业务审批口径复核。"
+    )
+    trace.final_answer = final_answer
+    trace.metadata = {
+        "bizline_profitability": biz,
+        "pvm": pvm,
+        "branch_profitability": branch,
+        "high_revenue_low_profit": high_low,
+        "what_if": scenario,
+        "insights": insights,
+    }
+    trace.add_step(
+        StepType.CONCLUSION,
+        "综合结论",
+        final_answer,
+        result={
+            "period": selected_period,
+            "total_profit": total_profit,
+            "pvm_total_variance": float(pvm_row["total_variance"]),
+            "major_pvm_effect": major_effect,
+            "major_pvm_value": major_value,
+            "what_if_revenue_impact": float(scenario["revenue_impact"]),
+            "what_if_profit_impact": float(scenario["profit_impact"]),
+            "insight_count": len(insights),
+        },
+    )
+    trace.elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    return trace
 
 
 def _period_from_context(context: AgentResult) -> str:

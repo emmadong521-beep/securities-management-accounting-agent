@@ -227,6 +227,22 @@ Sample What-if task:
 
 ---
 
+## Explainable Agent Trace（可解释分析轨迹）
+
+The Agent Workbench exposes an Explainable Agent Trace（可解释分析轨迹）for each run.
+
+The trace shows:
+
+- natural-language task input
+- intent recognition
+- generated analysis plan
+- Tool-call Trace with tool names and inputs
+- observation summaries and key numbers
+- analysis decisions
+- final conclusion and follow-up context
+
+This is an analysis trace for business users and reviewers. It is not raw model reasoning. Profitability, PVM, branch ranking, What-if simulation, and management-insight calculations remain deterministic code outputs.
+
 ## Agent Workbench
 
 The Agent workbench is designed around visible tool orchestration rather than opaque text generation.
