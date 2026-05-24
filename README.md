@@ -67,16 +67,6 @@ After deployment, replace the placeholder Streamlit badge with the deployed app 
 - [Streamlit Deployment](docs/STREAMLIT_DEPLOYMENT.md)
 - [Changelog](CHANGELOG.md)
 
-## Rendering Checks
-
-This README intentionally keeps GitHub-rendered sections as plain multi-line
-Markdown:
-
-- Key Metrics is a normal Markdown table with one metric per row.
-- Architecture diagrams use fenced `mermaid` blocks with `flowchart` on the
-  next line.
-- No generated diagram or table content is stored as a compressed single line.
-
 ## Architecture
 
 ### Data Flow
@@ -154,6 +144,31 @@ Management accounting calculations must be reproducible and traceable. This proj
 - LLM enhancement is optional and is used only for task understanding, plan wording, conclusion organization, and follow-up responses.
 - If LLM configuration is missing or unavailable, the system falls back to deterministic mode.
 
+## Agent Workbench
+
+The Agent workbench is designed around visible tool orchestration rather than opaque text generation.
+
+It displays:
+
+- User task
+- Generated plan
+- Tool-call trace
+- Observations
+- Business conclusion
+- Follow-up response
+
+The core tools include:
+
+- `calculate_bizline_profitability`
+- `run_brokerage_budget_variance`
+- `run_pvm_analysis`
+- `calculate_branch_profitability`
+- `detect_high_revenue_low_profit_branches`
+- `explain_high_revenue_low_profit_branch`
+- `simulate_brokerage_recovery`
+- `detect_management_insights`
+- `generate_cfo_report_mock`
+
 ## Optional Validated Data From Project One
 
 The app can run independently with synthetic data, or read validated outputs from project one:
@@ -162,6 +177,83 @@ The app can run independently with synthetic data, or read validated outputs fro
 RECON_PROJECT_OUTPUT_DIR=/path/to/securities-month-end-recon-agent/data/output
 USE_RECON_VALIDATED_DATA=false
 ```
+
+When `USE_RECON_VALIDATED_DATA=true` and the configured directory contains `validated_actual_revenue.csv` and `validated_allocated_expense.csv`, the app shows project-one validated data as the active source.
+
+If files are missing, it automatically falls back to project-two synthetic data.
+
+## High-Revenue Low-Profit Analysis
+
+`src/profitability_insights.py` calculates:
+
+- revenue
+- revenue rank
+- operating profit
+- operating margin
+- margin rank
+- allocated expense
+- allocated expense ratio
+- customer mix summary
+- average commission rate
+- trade volume
+- rank gap
+
+Reason tags include:
+
+- `HIGH_SYSTEM_COST`
+- `LOW_COMMISSION_RATE`
+- `HIGH_INSTITUTION_CLIENT_RATIO`
+- `HIGH_MARKETING_EXPENSE`
+- `HIGH_HQ_ALLOCATION`
+- `LOW_OPERATING_MARGIN`
+
+## What-if Simulation
+
+`src/what_if.py` uses the brokerage revenue formula:
+
+```text
+brokerage commission revenue = trade volume × average commission rate
+```
+
+Example:
+
+```python
+simulate_brokerage_recovery(
+    period="2025-09",
+    trade_volume_change_pct=0.05,
+    commission_rate_change_bp=0.0,
+    expense_change_pct=0.0,
+)
+```
+
+The function returns base and simulated trade volume, commission rate, revenue, expense, revenue impact, and profit impact. All calculations are local code outputs.
+
+## Volcengine Ark LLM Integration
+
+Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+Configure `.env`:
+
+```bash
+LLM_ENABLED=true
+LLM_PROVIDER=volcengine
+ARK_API_KEY=your_ark_api_key_here
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/coding/v3
+ARK_MODEL=your_model_or_endpoint_id_here
+LLM_TEMPERATURE=0.2
+LLM_TIMEOUT_SECONDS=60
+```
+
+Notes:
+
+- `ARK_MODEL` should be replaced with the actual Model ID from the Volcengine Ark console.
+- Do not commit `.env`; it is ignored by `.gitignore`.
+- If the key or model is not configured, the app automatically uses deterministic mode.
+- LLM is used for task understanding and natural-language expression only. Profitability, PVM, What-if, insights, and amount calculations remain local code outputs.
 
 ## Engineering Quality
 
@@ -192,6 +284,19 @@ Outputs:
 - `data/output/data_quality_report.md`
 - `data/output/data_quality_report.json`
 
+The report covers:
+
+- row counts
+- primary-key uniqueness
+- foreign-key integrity
+- amount null checks
+- budget-vs-actual dimensional consistency
+- profitability checks
+- PVM identity checks
+- seeded operating story detection
+- public aggregate calibration
+- final `PASS / WARNING / FAIL` status
+
 ## Core Tables
 
 - `chart_of_accounts`
@@ -209,8 +314,16 @@ Outputs:
 - `management_insight`
 - `market_benchmark`
 
+## Seeded Demo Stories
+
+- Brokerage revenue below budget due to lower market trading volume and lower institutional commission rate.
+- A high-revenue branch shows lower operating margin after IT and headquarters expense allocation.
+- Wealth-management revenue grows while marketing incentive expense grows faster.
+- Margin-financing interest income under budget due to lower margin balance.
+- Some branches look strong on revenue but weaker after allocated expenses.
+
 ## Future Extensions
 
-- Deepen the mapping between project-one validated month-end outputs and management-accounting dimensions.
+- Deepen the mapping between project-one validated month-end outputs and project-two management accounting dimensions.
 - Add relationship manager, channel, IB project, and product-level profitability views.
 - Add richer LLM explanations while preserving local deterministic amount calculation.
