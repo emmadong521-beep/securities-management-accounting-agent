@@ -225,6 +225,187 @@ def _show_llm_config_status() -> None:
         st.json(display_status)
 
 
+def build_agent_related_chart_flags(result) -> dict:
+    refs = " ".join(str(item) for item in (getattr(result, "chart_refs", None) or []))
+    text = " ".join(
+        [
+            refs,
+            str(getattr(result, "user_task", "") or ""),
+            str(getattr(result, "final_answer", "") or ""),
+        ]
+    ).lower()
+    chinese_text = text
+    show_what_if = any(keyword in chinese_text for keyword in ["what-if", "what if", "如果", "交易量恢复", "交易量", "佣金率"])
+    show_high_low = any(keyword in chinese_text for keyword in ["高收入", "低利润", "盈利穿透", "利润率偏低", "营业部盈利穿透"])
+    show_pvm = any(keyword in chinese_text for keyword in ["pvm", "经纪", "交易量影响", "佣金率影响", "预算 vs 实际"])
+    show_bizline = any(keyword in chinese_text for keyword in ["业务线", "利润低于预算", "利润贡献", "公司利润", "经营利润"])
+    show_branch_scatter = any(keyword in chinese_text for keyword in ["营业部", "利润率", "branch", "收入 vs 经营利润率"])
+    is_profit_variance = any(keyword in chinese_text for keyword in ["利润低于预算", "公司利润", "主要原因"])
+
+    if not refs and not any([show_what_if, show_high_low, show_pvm, show_bizline, show_branch_scatter]):
+        show_bizline = True
+        show_pvm = True
+        show_branch_scatter = True
+
+    if is_profit_variance:
+        show_bizline = True
+        show_pvm = True
+        show_branch_scatter = True
+    if show_high_low:
+        show_branch_scatter = True
+    if show_what_if:
+        show_pvm = True
+    if "top negative" in chinese_text or "明细" in chinese_text or show_pvm:
+        show_pvm_detail = True
+    else:
+        show_pvm_detail = False
+
+    return {
+        "show_bizline": show_bizline,
+        "show_pvm": show_pvm,
+        "show_pvm_detail": show_pvm_detail,
+        "show_branch_scatter": show_branch_scatter,
+        "show_high_low": show_high_low,
+        "show_what_if": show_what_if,
+    }
+
+
+def _render_agent_related_charts(result, period: str) -> None:
+    flags = build_agent_related_chart_flags(result)
+    if not any(flags.values()):
+        st.info("当前任务没有匹配到可展示的关联图表。")
+        return
+
+    if flags["show_bizline"]:
+        try:
+            chart_biz = calculate_bizline_profitability(period)
+            if chart_biz.empty:
+                st.info("当前期间无相关数据")
+            else:
+                render_section_title("业务线利润贡献", "📊")
+                plot_df = chart_biz.assign(**{"经营利润（万元）": chart_biz["operating_profit"] / 10000})
+                fig = px.bar(plot_df, x="biz_line_id", y="经营利润（万元）", title="业务线利润贡献（万元）")
+                fig.update_yaxes(title="经营利润（万元）")
+                st.plotly_chart(fig, width="stretch")
+                st.dataframe(_amount_view(chart_biz), width="stretch")
+                render_info_card("业务解读", "该图展示各业务线在费用分摊后的经营利润贡献，用于定位主要利润来源。", icon="📌")
+        except Exception as exc:
+            st.warning(f"业务线利润贡献图渲染失败：{exc}")
+
+    if flags["show_pvm"]:
+        try:
+            chart_pvm = run_pvm_analysis(period, "BROKERAGE")
+            if chart_pvm.empty:
+                st.info("当前期间无相关数据")
+            else:
+                render_section_title("PVM 瀑布图", "🌊")
+                p = chart_pvm.iloc[0]
+                waterfall = go.Figure(
+                    go.Waterfall(
+                        name="PVM",
+                        orientation="v",
+                        measure=["absolute", "relative", "relative", "relative", "total"],
+                        x=["预算收入", "交易量影响", "佣金率影响", "混合影响", "实际收入"],
+                        y=[
+                            p["budget_revenue"] / 10000,
+                            p["volume_effect"] / 10000,
+                            p["rate_effect"] / 10000,
+                            p["mix_effect"] / 10000,
+                            p["actual_revenue"] / 10000,
+                        ],
+                    )
+                )
+                waterfall.update_layout(title="PVM 瀑布图（万元）", yaxis_title="金额（万元）")
+                st.plotly_chart(waterfall, width="stretch")
+                render_info_card("业务解读", "PVM 将经纪业务收入差异拆分为交易量、佣金率和混合影响，便于区分市场活跃度和定价因素。", icon="🧮")
+        except Exception as exc:
+            st.warning(f"PVM 瀑布图渲染失败：{exc}")
+
+    if flags["show_pvm_detail"]:
+        try:
+            detail = get_pvm_detail(period)
+            render_section_title("Top negative variance 明细", "📉")
+            if detail.empty:
+                st.info("当前期间无相关数据")
+            else:
+                st.dataframe(_amount_view(detail.sort_values("total_variance").head(10)), width="stretch")
+                render_info_card("业务解读", "负向差异明细用于定位经纪收入缺口集中的营业部、客户分层和产品类型。", icon="🔎")
+        except Exception as exc:
+            st.warning(f"PVM 明细表渲染失败：{exc}")
+
+    if flags["show_branch_scatter"]:
+        try:
+            chart_branch = calculate_branch_profitability(period)
+            render_section_title("营业部收入 vs 经营利润率", "🏦")
+            if chart_branch.empty:
+                st.info("当前期间无相关数据")
+            else:
+                scatter_df = chart_branch.assign(**{"收入（万元）": chart_branch["revenue"] / 10000})
+                fig = px.scatter(
+                    scatter_df,
+                    x="收入（万元）",
+                    y="operating_margin",
+                    size=chart_branch["operating_profit"].clip(lower=1),
+                    color="branch_id",
+                    title="营业部收入 vs 经营利润率",
+                )
+                fig.update_xaxes(title="收入（万元）")
+                fig.update_yaxes(title="经营利润率")
+                st.plotly_chart(fig, width="stretch")
+                render_info_card("业务解读", "该散点图用于识别收入规模较高但费用分摊后利润率偏低的营业部。", icon="🔎")
+        except Exception as exc:
+            st.warning(f"营业部散点图渲染失败：{exc}")
+
+    if flags["show_high_low"]:
+        try:
+            high_low = detect_high_revenue_low_profit_branches(period)
+            render_section_title("高收入低利润营业部", "🚨")
+            if high_low.empty:
+                st.info("当前期间无相关数据")
+            else:
+                st.dataframe(_amount_view(high_low), width="stretch")
+                for row in high_low.head(3).itertuples():
+                    tag_text = str(getattr(row, "reason_tags", ""))
+                    render_info_card(
+                        f"{getattr(row, 'branch_name', getattr(row, 'branch_id', '营业部'))}",
+                        f"收入：{format_wan(getattr(row, 'revenue', 0))}；经营利润率：{getattr(row, 'operating_margin', 0):.2%}；原因标签：{tag_text}",
+                        icon="⚠️",
+                        border_color=reason_tag_color(tag_text),
+                    )
+                render_info_card("业务解读", "高收入低利润清单用于识别收入规模与真实利润贡献不匹配的营业部。", icon="📌")
+        except Exception as exc:
+            st.warning(f"高收入低利润表渲染失败：{exc}")
+
+    if flags["show_what_if"]:
+        try:
+            scenario = simulate_brokerage_recovery(period, trade_volume_change_pct=0.05)
+            render_section_title("What-if 模拟结果", "🧪")
+            c1, c2 = st.columns(2)
+            with c1:
+                render_kpi_card("收入影响", format_wan(scenario["revenue_impact"]), status="PASS" if scenario["revenue_impact"] >= 0 else "MEDIUM")
+            with c2:
+                render_kpi_card("利润影响", format_wan(scenario["profit_impact"]), status="PASS" if scenario["profit_impact"] >= 0 else "MEDIUM")
+            waterfall = go.Figure(
+                go.Waterfall(
+                    name="What-if",
+                    orientation="v",
+                    measure=["absolute", "relative", "relative", "total"],
+                    x=["基准收入", "收入影响", "费用增量影响", "利润影响"],
+                    y=[
+                        scenario["base_revenue"] / 10000,
+                        scenario["revenue_impact"] / 10000,
+                        -(scenario["simulated_expense"] - scenario["base_expense"]) / 10000,
+                        scenario["profit_impact"] / 10000,
+                    ],
+                )
+            )
+            waterfall.update_layout(title="What-if 模拟结果（万元）", yaxis_title="金额（万元）")
+            st.plotly_chart(waterfall, width="stretch")
+            render_info_card("业务解读", scenario["explanation"], icon="🧮")
+        except Exception as exc:
+            st.warning(f"What-if 模拟图渲染失败：{exc}")
+
+
 if page == "CFO 首页看板":
     _recommended_demo_path()
     recon_status = get_recon_data_status()
@@ -476,10 +657,8 @@ else:
             if result.report_path:
                 st.caption(f"报告路径：{result.report_path}")
 
-        if result.chart_refs:
-            st.subheader("关联图表")
-            for chart in result.chart_refs:
-                st.markdown(f"- {chart}")
+        st.subheader("关联图表")
+        _render_agent_related_charts(result, agent_period)
 
         followup = st.text_input("追问", placeholder="例如：交易量影响和佣金率影响哪个更大？有什么管理建议？")
         if followup:
