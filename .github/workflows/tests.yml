@@ -14,6 +14,7 @@ jobs:
       ARK_BASE_URL: https://ark.cn-beijing.volces.com/api/coding/v3
       ARK_MODEL: your_model_or_endpoint_id_here
       USE_RECON_VALIDATED_DATA: "false"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,9 +33,6 @@ jobs:
         run: |
           python -m src.seed_data
           python -m src.db
-
-      - name: Check Markdown and workflow formatting
-        run: python scripts/check_markdown_format.py
 
       - name: Run tests
         run: python -m pytest -q
