@@ -240,6 +240,7 @@ The trace shows:
 - observation summaries and key numbers
 - analysis decisions
 - final conclusion and follow-up context
+- downloadable trace JSON for review and replay
 
 This is an analysis trace for business users and reviewers. It is not raw model reasoning. Profitability, PVM, branch ranking, What-if simulation, and management-insight calculations remain deterministic code outputs.
 
