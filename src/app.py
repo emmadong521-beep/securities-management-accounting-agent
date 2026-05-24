@@ -21,6 +21,15 @@ from src.profitability_insights import (
     explain_high_revenue_low_profit_branch,
 )
 from src.recon_data_loader import get_recon_data_status
+from src.ui import (
+    format_wan,
+    inject_global_css,
+    reason_tag_color,
+    render_info_card,
+    render_kpi_card,
+    render_page_header,
+    render_section_title,
+)
 from src.validation import (
     calculate_bizline_profitability,
     calculate_branch_profitability,
@@ -35,7 +44,11 @@ from src.what_if import simulate_brokerage_recovery
 
 
 st.set_page_config(page_title="证券公司管理会计多维经营分析 Agent", layout="wide")
-st.title("证券公司管理会计多维经营分析 Agent")
+inject_global_css()
+render_page_header(
+    "证券公司管理会计多维经营分析 Agent",
+    "业务线利润贡献、经纪业务 PVM、营业部盈利穿透、What-if 模拟、经营报告生成",
+)
 
 load_synthetic_data_to_duckdb()
 period = st.sidebar.selectbox("分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=8)
@@ -105,6 +118,16 @@ def _agent_steps_view(result) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _data_quality_status() -> str:
+    report_path = Path(__file__).resolve().parents[1] / "data" / "output" / "data_quality_report.json"
+    if not report_path.exists():
+        return "WARNING"
+    try:
+        return json.loads(report_path.read_text(encoding="utf-8")).get("status", "WARNING")
+    except json.JSONDecodeError:
+        return "WARNING"
+
+
 TRACE_ICONS = {
     "意图识别": "🎯",
     "制定计划": "📝",
@@ -130,22 +153,23 @@ def _render_trace_payload(payload) -> None:
 
 def _render_explainable_trace(trace) -> None:
     trace_dict = trace.to_dict()
-    st.subheader("可解释分析轨迹")
+    render_section_title("可解释分析轨迹", "🧭")
     st.caption("展示任务理解、分析计划、工具调用轨迹、观察结果、分析判断和综合结论。")
     c1, c2, c3 = st.columns(3)
-    c1.metric("分析步骤数", len(trace.steps))
-    c2.metric("工具调用次数", sum(1 for step in trace.steps if step.tool_name))
-    c3.metric("总耗时", f"{(trace.elapsed_ms or 0) / 1000:.2f}s")
-    with st.container(border=True):
-        st.subheader("最终结论")
-        st.write(trace.final_answer)
+    with c1:
+        render_kpi_card("分析步骤数", str(len(trace.steps)), status="PASS")
+    with c2:
+        render_kpi_card("工具调用次数", str(sum(1 for step in trace.steps if step.tool_name)), status="PASS")
+    with c3:
+        render_kpi_card("总耗时", f"{(trace.elapsed_ms or 0) / 1000:.2f}s", status="PASS")
+    render_info_card("最终结论", trace.final_answer, icon="✅", border_color="#059669")
     st.markdown("**任务输入**")
     st.write(trace.user_task)
     for step in trace.steps:
         step_type = step.step_type.value
         icon = TRACE_ICONS.get(step_type, "•")
         with st.expander(f"{icon} 步骤 {step.step_no}｜{step_type}｜{step.title}", expanded=step.step_type.value == "综合结论"):
-            st.write(step.detail)
+            render_info_card(step.title, step.detail, icon=icon, border_color="#1F4E79")
             if step.tool_name:
                 st.markdown("**工具调用轨迹**")
                 st.json({"tool_name": step.tool_name, "tool_input": step.tool_input or {}})
@@ -165,7 +189,7 @@ def _render_explainable_trace(trace) -> None:
 
 def _recommended_demo_path() -> None:
     with st.container(border=True):
-        st.subheader("推荐演示路径")
+        render_section_title("推荐演示路径", "🧭")
         st.markdown(
             """
 1. 从“CFO 首页看板”查看营业收入、经营利润、经纪收入差异和管理洞察数量。
@@ -205,16 +229,29 @@ if page == "CFO 首页看板":
     _recommended_demo_path()
     recon_status = get_recon_data_status()
     st.info(f"数据来源状态：当前使用：{recon_status['source']}。{recon_status['message']}")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("营业收入", f"{biz['revenue'].sum()/10000:,.0f} 万元")
-    c2.metric("经营利润", f"{biz['operating_profit'].sum()/10000:,.0f} 万元")
-    c3.metric("经纪收入差异", f"{pvm['total_variance'].iloc[0]/10000:,.0f} 万元")
-    c4.metric("洞察数量", len(detect_management_insights(period)))
+    brokerage_variance = run_brokerage_budget_variance(period)
+    profit_budget_variance = float(brokerage_variance["profit_variance"].sum())
+    insight_count = len(detect_management_insights(period))
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        render_kpi_card("营业收入", format_wan(biz["revenue"].sum()), status="PASS")
+    with c2:
+        render_kpi_card("经营利润", format_wan(biz["operating_profit"].sum()), status="PASS")
+    with c3:
+        render_kpi_card("利润预算差异", format_wan(profit_budget_variance), status="MEDIUM" if profit_budget_variance < 0 else "PASS")
+    with c4:
+        render_kpi_card("经纪业务差异", format_wan(pvm["total_variance"].iloc[0]), status="MEDIUM" if pvm["total_variance"].iloc[0] < 0 else "PASS")
+    with c5:
+        render_kpi_card("管理洞察数", str(insight_count), status="PASS", help_text=f"数据质量 {_data_quality_status()}")
     biz_chart = biz.assign(**{"经营利润（万元）": biz["operating_profit"] / 10000})
     fig = px.bar(biz_chart, x="biz_line_id", y="经营利润（万元）", title="业务线利润贡献（万元）")
     fig.update_yaxes(title="经营利润（万元）")
     st.plotly_chart(fig, width="stretch")
-    st.caption("利润贡献按实际收入、直接成本和分摊费用计算，用于观察不同业务线的分摊后贡献。")
+    render_info_card(
+        "业务解读",
+        "利润贡献按实际收入、直接成本和分摊费用计算，用于观察不同业务线的分摊后贡献。",
+        icon="📊",
+    )
     branch_chart = branch.assign(**{"收入（万元）": branch["revenue"] / 10000})
     scatter = px.scatter(
         branch_chart,
@@ -227,7 +264,7 @@ if page == "CFO 首页看板":
     scatter.update_xaxes(title="收入（万元）")
     scatter.update_yaxes(title="经营利润率")
     st.plotly_chart(scatter, width="stretch")
-    st.caption("横轴越靠右表示收入规模越高，纵轴越高表示费用分摊后的利润率越高。")
+    render_info_card("图表解读", "横轴越靠右表示收入规模越高，纵轴越高表示费用分摊后的利润率越高。", icon="🔎")
     st.subheader("管理洞察")
     insight_df = detect_management_insights(period)
     for row in insight_df.itertuples():
@@ -237,14 +274,20 @@ if page == "CFO 首页看板":
             st.caption(f"影响金额：{row.financial_impact / 10000:,.2f} 万元；建议：{row.recommendation}")
 
 elif page == "业务线利润贡献分析":
+    render_section_title("业务线利润贡献分析", "📊")
     st.dataframe(_amount_view(biz), width="stretch")
     plot_df = biz.assign(**{"收入（万元）": biz["revenue"] / 10000, "经营利润（万元）": biz["operating_profit"] / 10000})
     fig = px.bar(plot_df, x="biz_line_id", y=["收入（万元）", "经营利润（万元）"], barmode="group", title="业务线收入与利润（万元）")
     fig.update_yaxes(title="金额（万元）")
     st.plotly_chart(fig, width="stretch")
-    st.caption("该图对比业务线收入和分摊后经营利润，突出规模与真实利润贡献之间的差异。")
+    render_info_card(
+        "业务解读",
+        "该图对比业务线收入和分摊后经营利润，突出规模与分摊后利润贡献之间的差异。",
+        icon="📌",
+    )
 
 elif page == "经纪业务预实差异归因":
+    render_section_title("经纪业务预实差异归因", "🌊")
     variance = run_brokerage_budget_variance(period)
     pvm_all = get_pvm_detail(period)
     branch_options = ["ALL"] + sorted(pvm_all["branch_id"].dropna().unique().tolist())
@@ -270,14 +313,14 @@ elif page == "经纪业务预实差异归因":
     ))
     waterfall.update_layout(title="PVM 瀑布图（万元）", yaxis_title="金额（万元）")
     st.plotly_chart(waterfall, width="stretch")
-    st.caption("PVM 将经纪佣金收入差异拆为交易量影响、佣金率影响和混合影响，金额由代码计算。")
+    render_info_card("业务解读", "PVM 将经纪佣金收入差异拆为交易量影响、佣金率影响和混合影响，金额由代码计算。", icon="🧮")
     grouped = variance.groupby("branch_id", as_index=False)[["budget_revenue", "actual_revenue"]].sum()
     grouped["预算收入（万元）"] = grouped["budget_revenue"] / 10000
     grouped["实际收入（万元）"] = grouped["actual_revenue"] / 10000
     fig = px.bar(grouped, x="branch_id", y=["预算收入（万元）", "实际收入（万元）"], barmode="group", title="经纪业务预算 vs 实际（万元）")
     fig.update_yaxes(title="金额（万元）")
     st.plotly_chart(fig, width="stretch")
-    st.caption("预算与实际对比用于定位收入缺口集中在哪些营业部。")
+    render_info_card("预算 vs 实际解读", "预算与实际对比用于定位收入缺口集中在哪些营业部。", icon="📉")
     st.subheader("Top negative variance 明细")
     st.dataframe(_amount_view(detail.sort_values("total_variance").head(10)), width="stretch")
     st.subheader("自动经营解释")
@@ -292,12 +335,23 @@ elif page == "营业部盈利能力排名":
     st.caption("排名表基于费用分摊后的经营利润，避免只看收入规模。")
 
 elif page == "营业部盈利穿透分析":
+    render_section_title("营业部盈利穿透分析", "🏦")
     st.subheader("收入排名 vs 经营利润率排名")
     gap = calculate_revenue_margin_rank_gap(period)
     high_low = detect_high_revenue_low_profit_branches(period)
     st.dataframe(_amount_view(gap.sort_values("revenue_rank")), width="stretch")
     st.subheader("高收入低利润营业部清单")
     st.dataframe(_amount_view(high_low), width="stretch")
+    if not high_low.empty:
+        render_section_title("高收入低利润重点营业部", "🚨")
+        for row in high_low.head(3).itertuples():
+            tag_text = str(getattr(row, "reason_tags", ""))
+            render_info_card(
+                f"{getattr(row, 'branch_name', getattr(row, 'branch_id', '营业部'))}",
+                f"收入：{format_wan(getattr(row, 'revenue', 0))}；经营利润率：{getattr(row, 'operating_margin', 0):.2%}；原因标签：{tag_text}",
+                icon="⚠️",
+                border_color=reason_tag_color(tag_text),
+            )
     scatter_df = gap.assign(**{"收入（万元）": gap["revenue"] / 10000})
     fig = px.scatter(
         scatter_df,
@@ -311,14 +365,14 @@ elif page == "营业部盈利穿透分析":
     fig.update_xaxes(title="收入（万元）")
     fig.update_yaxes(title="经营利润率")
     st.plotly_chart(fig, width="stretch")
-    st.caption("右侧但位置偏低的营业部表示收入规模较高，但费用分摊后利润率偏低。")
+    render_info_card("散点图解读", "右侧但位置偏低的营业部表示收入规模较高，但费用分摊后利润率偏低。", icon="🔎")
     if not gap.empty:
         selected_branch = st.selectbox("选择营业部", gap["branch_id"].tolist(), format_func=lambda bid: f"{bid} - {gap[gap['branch_id'] == bid]['branch_name'].iloc[0]}")
         detail = explain_high_revenue_low_profit_branch(period, selected_branch)
         with st.container(border=True):
-            st.subheader("单个营业部原因解释")
-            st.write(detail["explanation"])
-            st.write(f"建议：{detail['recommendation']}")
+            render_section_title("单个营业部原因解释", "🧾")
+            render_info_card("原因解释", detail["explanation"], icon="📌")
+            render_info_card("建议动作", detail["recommendation"], icon="✅", border_color="#059669")
         expense_cols = ["salary_expense", "rent_expense", "marketing_expense", "it_allocated_expense", "market_data_allocated_expense", "hq_allocated_expense"]
         row = gap[gap["branch_id"] == selected_branch].iloc[0]
         expense_df = pd.DataFrame({"费用类型": expense_cols, "金额（万元）": [float(row.get(col, 0)) / 10000 for col in expense_cols]})
@@ -327,17 +381,25 @@ elif page == "营业部盈利穿透分析":
         st.caption("费用结构图用于判断低利润率来自系统、行情、总部、营销还是基础运营成本。")
 
 elif page == "What-if 情景模拟":
-    st.subheader("What-if 情景模拟")
-    c1, c2, c3 = st.columns(3)
-    trade_pct = c1.slider("交易量变化", min_value=-0.20, max_value=0.30, value=0.05, step=0.01)
-    rate_bp = c2.number_input("佣金率变化（bp）", value=0.0, step=0.5)
-    expense_pct = c3.slider("费用变化", min_value=-0.10, max_value=0.20, value=0.0, step=0.01)
+    render_section_title("What-if 情景模拟", "🧪")
+    control_col, result_col = st.columns([1, 2])
+    with control_col:
+        render_info_card("参数控制", "调整交易量、佣金率和费用假设，右侧实时展示代码测算结果。", icon="⚙️")
+        trade_pct = st.slider("交易量变化", min_value=-0.20, max_value=0.30, value=0.05, step=0.01)
+        rate_bp = st.number_input("佣金率变化（bp）", value=0.0, step=0.5)
+        expense_pct = st.slider("费用变化", min_value=-0.10, max_value=0.20, value=0.0, step=0.01)
     result = simulate_brokerage_recovery(period, trade_pct, rate_bp, expense_pct)
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("收入影响", f"{result['revenue_impact']/10000:,.2f} 万元")
-    k2.metric("利润影响", f"{result['profit_impact']/10000:,.2f} 万元")
-    k3.metric("模拟收入", f"{result['simulated_revenue']/10000:,.2f} 万元")
-    k4.metric("模拟费用", f"{result['simulated_expense']/10000:,.2f} 万元")
+    simulated_profit = result["simulated_revenue"] - result["simulated_expense"]
+    with result_col:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
+            render_kpi_card("收入影响", format_wan(result["revenue_impact"]), status="PASS" if result["revenue_impact"] >= 0 else "MEDIUM")
+        with k2:
+            render_kpi_card("利润影响", format_wan(result["profit_impact"]), status="PASS" if result["profit_impact"] >= 0 else "MEDIUM")
+        with k3:
+            render_kpi_card("模拟收入", format_wan(result["simulated_revenue"]), status="PASS")
+        with k4:
+            render_kpi_card("模拟利润", format_wan(simulated_profit), status="PASS" if simulated_profit >= 0 else "MEDIUM")
     waterfall = go.Figure(go.Waterfall(
         name="What-if",
         orientation="v",
@@ -347,8 +409,7 @@ elif page == "What-if 情景模拟":
     ))
     waterfall.update_layout(title="What-if 收入与利润影响（万元）", yaxis_title="金额（万元）")
     st.plotly_chart(waterfall, width="stretch")
-    st.caption("情景模拟用交易量、佣金率和费用变化计算收入与利润影响，金额由代码完成。")
-    st.write(result["explanation"])
+    render_info_card("情景模拟解读", result["explanation"], icon="🧮")
 
 elif page == "多维下钻筛选器":
     selected_biz = st.multiselect("业务线", biz["biz_line_id"].tolist(), default=biz["biz_line_id"].tolist())
@@ -364,12 +425,12 @@ elif page == "多维下钻筛选器":
 elif page == "自动生成 CFO 月度经营分析报告":
     report = generate_cfo_report_mock(period)
     st.markdown(report)
-    if st.button("导出 Markdown CFO 报告"):
+    if st.button("导出 Markdown CFO 报告", type="primary"):
         output_path = export_cfo_report(period)
         st.success(f"已导出：{output_path}")
 
 else:
-    st.subheader("Agent 工作台")
+    render_section_title("Agent 工作台", "🤖")
     st.caption("输入自然语言任务，Agent 会自动生成分析计划、调用管理会计分析工具，并展示观察结果和最终经营结论。")
     llm_config = load_llm_config()
     use_llm = st.checkbox("使用 LLM 增强回答", value=llm_config.enabled)
@@ -383,7 +444,7 @@ else:
     user_task = st.text_area("自然语言任务", value=default_task, height=100)
     agent_period = st.selectbox("Agent 分析期间", [f"2025-{m:02d}" for m in range(1, 13)], index=int(period[-2:]) - 1)
 
-    if st.button("运行 Agent"):
+    if st.button("运行 Agent", type="primary"):
         st.session_state["management_agent_use_llm"] = use_llm
         st.session_state["management_agent_result"] = run_management_accounting_agent(user_task, agent_period, use_llm=use_llm)
         st.session_state["management_agent_trace"] = run_management_accounting_agent_with_trace(user_task, agent_period)
@@ -410,8 +471,8 @@ else:
                 st.write(step.observation)
 
         with st.container(border=True):
-            st.subheader("最终经营结论")
-            st.write(result.final_answer)
+            render_section_title("最终经营结论", "✅")
+            render_info_card("经营结论", result.final_answer, icon="✅", border_color="#059669")
             if result.report_path:
                 st.caption(f"报告路径：{result.report_path}")
 
