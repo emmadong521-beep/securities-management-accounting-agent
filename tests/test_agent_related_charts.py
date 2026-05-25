@@ -40,3 +40,9 @@ def test_empty_chart_refs_still_uses_keywords():
 
     assert flags["show_high_low"]
     assert flags["show_branch_scatter"]
+
+
+def test_bcg_task_shows_bcg_matrix():
+    flags = build_agent_related_chart_flags(_result("请用 BCG 矩阵分析 2025-09 各业务线经营状态。"))
+
+    assert flags["show_bcg"]

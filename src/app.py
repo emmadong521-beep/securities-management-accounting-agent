@@ -246,11 +246,22 @@ def _show_llm_config_status() -> None:
 
 def build_agent_related_chart_flags(result) -> dict:
     refs = " ".join(str(item) for item in (getattr(result, "chart_refs", None) or []))
+    step_text = " ".join(
+        " ".join(
+            [
+                str(getattr(step, "tool_name", "") or ""),
+                str(getattr(step, "thought", "") or ""),
+                str(getattr(step, "observation", "") or ""),
+            ]
+        )
+        for step in (getattr(result, "steps", None) or [])
+    )
     text = " ".join(
         [
             refs,
             str(getattr(result, "user_task", "") or ""),
             str(getattr(result, "final_answer", "") or ""),
+            step_text,
         ]
     ).lower()
     chinese_text = text
