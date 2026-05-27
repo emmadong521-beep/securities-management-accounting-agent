@@ -222,11 +222,13 @@ def _recommended_demo_path() -> None:
 
 def _llm_status_text(use_llm: bool) -> str:
     status = explain_llm_config_status()
-    if use_llm and status["available"]:
-        return "当前模式：Volcengine Ark LLM Agent"
+    if not use_llm:
+        return "当前模式：Deterministic Agent Mode"
+    if status["available"]:
+        return f"当前模式：{status['mode']}"
     if use_llm and not status["available"]:
         return "当前模式：LLM 配置不完整，已回退 Mock Agent"
-    return "当前模式：Mock Agent"
+    return "当前模式：Deterministic Agent Mode"
 
 
 def _show_llm_config_status() -> None:
@@ -776,7 +778,7 @@ else:
     _show_llm_config_status()
     if use_llm and is_llm_available():
         st.caption(f"当前模型：{llm_config.model}")
-    elif use_llm and llm_config.enabled:
+    elif use_llm:
         st.warning("LLM 配置不完整，页面将自动使用 Mock Agent。")
     default_task = f"请分析 {period} 公司利润低于预算的主要原因。"
     user_task = st.text_area("自然语言任务", value=default_task, height=100)
