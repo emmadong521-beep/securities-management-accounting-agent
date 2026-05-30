@@ -23,9 +23,11 @@ from src.profitability_insights import (
 )
 from src.recon_data_loader import get_recon_data_status
 from src.ui import (
+    apply_plotly_theme,
     format_wan,
     inject_global_css,
     reason_tag_color,
+    render_agent_step_card,
     render_info_card,
     render_kpi_card,
     render_page_header,
@@ -188,7 +190,7 @@ def _render_explainable_trace(trace) -> None:
         step_type = step.step_type.value
         icon = TRACE_ICONS.get(step_type, "•")
         with st.expander(f"{icon} 步骤 {step.step_no}｜{step_type}｜{step.title}", expanded=step.step_type.value == "综合结论"):
-            render_info_card(step.title, step.detail, icon=icon, border_color="#1F4E79")
+            render_agent_step_card(step.title, step.detail, icon=icon, border_color="#1F4E79")
             if step.tool_name:
                 st.markdown("**工具调用轨迹**")
                 st.json({"tool_name": step.tool_name, "tool_input": step.tool_input or {}})
@@ -320,7 +322,7 @@ def _render_agent_related_charts(result, period: str) -> None:
                 plot_df = chart_biz.assign(**{"经营利润（万元）": chart_biz["operating_profit"] / 10000})
                 fig = px.bar(plot_df, x="biz_line_id", y="经营利润（万元）", title="业务线利润贡献（万元）")
                 fig.update_yaxes(title="经营利润（万元）")
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(apply_plotly_theme(fig), width="stretch")
                 st.dataframe(_amount_view(chart_biz), width="stretch")
                 render_info_card("业务解读", "该图展示各业务线在费用分摊后的经营利润贡献，用于定位主要利润来源。", icon="📌")
         except Exception as exc:
@@ -355,7 +357,7 @@ def _render_agent_related_charts(result, period: str) -> None:
                 fig.add_hline(y=float(matrix["growth_threshold"].iloc[0]), line_dash="dash", line_color="#64748B")
                 fig.update_xaxes(title="盈利质量")
                 fig.update_yaxes(title="增长性")
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(apply_plotly_theme(fig), width="stretch")
                 st.dataframe(_amount_view(matrix[["entity_name", "quadrant", "revenue", "revenue_growth_pct", "operating_margin", "recommended_action"]]), width="stretch")
                 render_info_card("业务解读", "该矩阵用内部盈利质量和增长性指标识别业务线或营业部经营组合状态。", icon="📌")
         except Exception as exc:
@@ -385,7 +387,7 @@ def _render_agent_related_charts(result, period: str) -> None:
                     )
                 )
                 waterfall.update_layout(title="PVM 瀑布图（万元）", yaxis_title="金额（万元）")
-                st.plotly_chart(waterfall, width="stretch")
+                st.plotly_chart(apply_plotly_theme(waterfall), width="stretch")
                 render_info_card("业务解读", "PVM 将经纪业务收入差异拆分为交易量、佣金率和混合影响，便于区分市场活跃度和定价因素。", icon="🧮")
         except Exception as exc:
             st.warning(f"PVM 瀑布图渲染失败：{exc}")
@@ -420,7 +422,7 @@ def _render_agent_related_charts(result, period: str) -> None:
                 )
                 fig.update_xaxes(title="收入（万元）")
                 fig.update_yaxes(title="经营利润率")
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(apply_plotly_theme(fig), width="stretch")
                 render_info_card("业务解读", "该散点图用于识别收入规模较高但费用分摊后利润率偏低的营业部。", icon="🔎")
         except Exception as exc:
             st.warning(f"营业部散点图渲染失败：{exc}")
@@ -469,7 +471,7 @@ def _render_agent_related_charts(result, period: str) -> None:
                 )
             )
             waterfall.update_layout(title="What-if 模拟结果（万元）", yaxis_title="金额（万元）")
-            st.plotly_chart(waterfall, width="stretch")
+            st.plotly_chart(apply_plotly_theme(waterfall), width="stretch")
             render_info_card("业务解读", scenario["explanation"], icon="🧮")
         except Exception as exc:
             st.warning(f"What-if 模拟图渲染失败：{exc}")
@@ -496,7 +498,7 @@ if page == "CFO 首页看板":
     biz_chart = biz.assign(**{"经营利润（万元）": biz["operating_profit"] / 10000})
     fig = px.bar(biz_chart, x="biz_line_id", y="经营利润（万元）", title="业务线利润贡献（万元）")
     fig.update_yaxes(title="经营利润（万元）")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     render_info_card(
         "业务解读",
         "利润贡献按实际收入、直接成本和分摊费用计算，用于观察不同业务线的分摊后贡献。",
@@ -513,7 +515,7 @@ if page == "CFO 首页看板":
     )
     scatter.update_xaxes(title="收入（万元）")
     scatter.update_yaxes(title="经营利润率")
-    st.plotly_chart(scatter, width="stretch")
+    st.plotly_chart(apply_plotly_theme(scatter), width="stretch")
     render_info_card("图表解读", "横轴越靠右表示收入规模越高，纵轴越高表示费用分摊后的利润率越高。", icon="🔎")
     st.subheader("管理洞察")
     insight_df = detect_management_insights(period)
@@ -529,7 +531,7 @@ elif page == "业务线利润贡献分析":
     plot_df = biz.assign(**{"收入（万元）": biz["revenue"] / 10000, "经营利润（万元）": biz["operating_profit"] / 10000})
     fig = px.bar(plot_df, x="biz_line_id", y=["收入（万元）", "经营利润（万元）"], barmode="group", title="业务线收入与利润（万元）")
     fig.update_yaxes(title="金额（万元）")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     render_info_card(
         "业务解读",
         "该图对比业务线收入和分摊后经营利润，突出规模与分摊后利润贡献之间的差异。",
@@ -562,14 +564,14 @@ elif page == "经纪业务预实差异归因":
         y=[p["budget_revenue"] / 10000, p["volume_effect"] / 10000, p["rate_effect"] / 10000, p["mix_effect"] / 10000, p["actual_revenue"] / 10000],
     ))
     waterfall.update_layout(title="PVM 瀑布图（万元）", yaxis_title="金额（万元）")
-    st.plotly_chart(waterfall, width="stretch")
+    st.plotly_chart(apply_plotly_theme(waterfall), width="stretch")
     render_info_card("业务解读", "PVM 将经纪佣金收入差异拆为交易量影响、佣金率影响和混合影响，金额由代码计算。", icon="🧮")
     grouped = variance.groupby("branch_id", as_index=False)[["budget_revenue", "actual_revenue"]].sum()
     grouped["预算收入（万元）"] = grouped["budget_revenue"] / 10000
     grouped["实际收入（万元）"] = grouped["actual_revenue"] / 10000
     fig = px.bar(grouped, x="branch_id", y=["预算收入（万元）", "实际收入（万元）"], barmode="group", title="经纪业务预算 vs 实际（万元）")
     fig.update_yaxes(title="金额（万元）")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     render_info_card("预算 vs 实际解读", "预算与实际对比用于定位收入缺口集中在哪些营业部。", icon="📉")
     st.subheader("Top negative variance 明细")
     st.dataframe(_amount_view(detail.sort_values("total_variance").head(10)), width="stretch")
@@ -581,7 +583,7 @@ elif page == "营业部盈利能力排名":
     rank_df = branch.sort_values("profit_rank").assign(**{"经营利润（万元）": branch["operating_profit"] / 10000})
     fig = px.bar(rank_df, x="branch_id", y="经营利润（万元）", color="operating_margin", title="营业部盈利能力排名（万元）")
     fig.update_yaxes(title="经营利润（万元）")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     st.caption("排名表基于费用分摊后的经营利润，避免只看收入规模。")
 
 elif page == "营业部盈利穿透分析":
@@ -614,7 +616,7 @@ elif page == "营业部盈利穿透分析":
     )
     fig.update_xaxes(title="收入（万元）")
     fig.update_yaxes(title="经营利润率")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     render_info_card("散点图解读", "右侧但位置偏低的营业部表示收入规模较高，但费用分摊后利润率偏低。", icon="🔎")
     if not gap.empty:
         selected_branch = st.selectbox("选择营业部", gap["branch_id"].tolist(), format_func=lambda bid: f"{bid} - {gap[gap['branch_id'] == bid]['branch_name'].iloc[0]}")
@@ -627,7 +629,7 @@ elif page == "营业部盈利穿透分析":
         row = gap[gap["branch_id"] == selected_branch].iloc[0]
         expense_df = pd.DataFrame({"费用类型": expense_cols, "金额（万元）": [float(row.get(col, 0)) / 10000 for col in expense_cols]})
         pie = px.pie(expense_df, names="费用类型", values="金额（万元）", title="费用分摊结构（万元）")
-        st.plotly_chart(pie, width="stretch")
+        st.plotly_chart(apply_plotly_theme(pie), width="stretch")
         st.caption("费用结构图用于判断低利润率来自系统、行情、总部、营销还是基础运营成本。")
 
 elif page == "管理会计 BCG 矩阵":
@@ -692,7 +694,7 @@ elif page == "管理会计 BCG 矩阵":
         fig.add_hline(y=growth_threshold, line_dash="dash", line_color="#64748B")
         fig.update_xaxes(title="盈利质量")
         fig.update_yaxes(title="增长性")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(apply_plotly_theme(fig), width="stretch")
         render_info_card(
             "矩阵说明",
             "本矩阵为内部管理会计改造版，不使用外部市场份额，而使用经营利润率、收入增长、预算偏差等内部指标。",
@@ -748,7 +750,7 @@ elif page == "What-if 情景模拟":
         y=[result["base_revenue"] / 10000, result["revenue_impact"] / 10000, -(result["simulated_expense"] - result["base_expense"]) / 10000, result["profit_impact"] / 10000],
     ))
     waterfall.update_layout(title="What-if 收入与利润影响（万元）", yaxis_title="金额（万元）")
-    st.plotly_chart(waterfall, width="stretch")
+    st.plotly_chart(apply_plotly_theme(waterfall), width="stretch")
     render_info_card("情景模拟解读", result["explanation"], icon="🧮")
 
 elif page == "多维下钻筛选器":
@@ -758,7 +760,7 @@ elif page == "多维下钻筛选器":
     st.dataframe(_amount_view(filtered), width="stretch")
     fig = px.bar(filtered, x="biz_line_id", y="profit_contribution_rate", title="利润贡献率")
     fig.update_yaxes(title="利润贡献率")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(apply_plotly_theme(fig), width="stretch")
     st.caption("利润贡献率用于判断各业务线在分摊后利润池中的相对贡献。")
     st.dataframe(_amount_view(branch[branch["branch_id"].isin(selected_branch)]), width="stretch")
 
